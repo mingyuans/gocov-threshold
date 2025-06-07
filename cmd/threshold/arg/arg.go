@@ -1,6 +1,10 @@
 package arg
 
-import "flag"
+import (
+	"fmt"
+	"os"
+	"strings"
+)
 
 type Arg struct {
 	IgnoreMain   bool
@@ -14,12 +18,20 @@ type Arg struct {
 // ParseArg parses command-line flags into an Arg struct.
 func ParseArg() Arg {
 	var a Arg
-	flag.BoolVar(&a.IgnoreMain, "ignore-main", false, "Ignore main package")
-	flag.StringVar(&a.Module, "module", "", "Module name")
-	flag.IntVar(&a.Threshold, "threshold", 0, "Threshold value")
-	flag.StringVar(&a.Path, "path", "", "Path to target")
-	flag.StringVar(&a.Coverprofile, "coverprofile", "", "Coverprofile output path")
-	flag.StringVar(&a.LoggerLevel, "logger-level", "", "Logger level (debug, info, warn, error)")
-	flag.Parse()
+	a.IgnoreMain = getActionInput("ignore-main") == "true"
+	a.Module = getActionInput("module")
+	a.Threshold = 80
+	if threshold := getActionInput("threshold"); threshold != "" {
+		_, _ = fmt.Sscanf(threshold, "%d", &a.Threshold)
+	}
+	a.Path = getActionInput("path")
+	a.Coverprofile = getActionInput("coverprofile")
+	a.LoggerLevel = getActionInput("logger-level")
 	return a
+}
+
+func getActionInput(input string) string {
+	return os.Getenv(
+		fmt.Sprintf("INPUT_%s", strings.ToUpper(input)),
+	)
 }
