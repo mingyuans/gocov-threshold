@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/mingyuans/gocov-threshold/cmd/arg"
-	"github.com/mingyuans/gocov-threshold/cmd/log"
-	"github.com/mingyuans/gocov-threshold/cmd/pr"
+	"github.com/mingyuans/gocov-threshold/cmd/threshold/arg"
+	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
+	"github.com/mingyuans/gocov-threshold/cmd/threshold/pr"
 	"go.uber.org/zap"
 )
 

@@ -5,6 +5,6 @@ COPY . /gocov-threshold
 
 RUN go mod download
 
-RUN cd cmd && go install
+RUN cd cmd/threshold && go install
 
-CMD ["gocov-threshold"]
+CMD ["threshold"]
