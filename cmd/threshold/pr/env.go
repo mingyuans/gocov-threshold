@@ -3,6 +3,8 @@ package pr
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/mingyuans/gocov-threshold/cmd/threshold/arg"
+	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
 	"net/http"
 	"os"
 	"strconv"
@@ -11,16 +13,25 @@ import (
 )
 
 func getPREnvironment() Environment {
+	repository := os.Getenv("GITHUB_REPOSITORY")
+
+	var repositoryName = ""
+	parts := strings.Split(repository, "/")
+	if len(parts) == 2 {
+		repositoryName = parts[1]
+	}
+
 	return Environment{
-		Repository:   os.Getenv("GITHUB_REPOSITORY"),
-		Token:        os.Getenv("GITHUB_TOKEN"),
-		EventName:    os.Getenv("GITHUB_EVENT_NAME"),
-		EventPath:    os.Getenv("GITHUB_EVENT_PATH"),
-		RefName:      os.Getenv("GITHUB_REF_NAME"),
-		SHA:          os.Getenv("GITHUB_SHA"),
-		Actor:        os.Getenv("GITHUB_ACTOR"),
-		ServerURL:    getEnvWithDefault("GITHUB_SERVER_URL", "https://github.com"),
-		APIServerURL: getEnvWithDefault("GITHUB_API_URL", "https://api.github.com"),
+		Repository:      repository,
+		RepositoryName:  repositoryName,
+		EventName:       os.Getenv("GITHUB_EVENT_NAME"),
+		EventPath:       os.Getenv("GITHUB_EVENT_PATH"),
+		RefName:         os.Getenv("GITHUB_REF_NAME"),
+		RepositoryOwner: os.Getenv("GITHUB_REPOSITORY_OWNER"),
+		SHA:             os.Getenv("GITHUB_SHA"),
+		Actor:           os.Getenv("GITHUB_ACTOR"),
+		ServerURL:       getEnvWithDefault("GITHUB_SERVER_URL", "https://github.com"),
+		APIServerURL:    getEnvWithDefault("GITHUB_API_URL", "https://api.github.com"),
 	}
 }
 
@@ -36,15 +47,16 @@ func (srv Service) GetEnvironment() Environment {
 }
 
 type Environment struct {
-	Repository   string // GITHUB_REPOSITORY
-	Token        string // GITHUB_TOKEN
-	EventName    string // GITHUB_EVENT_NAME
-	EventPath    string // GITHUB_EVENT_PATH
-	RefName      string // GITHUB_REF_NAME
-	SHA          string // GITHUB_SHA
-	Actor        string // GITHUB_ACTOR
-	ServerURL    string // GITHUB_SERVER_URL
-	APIServerURL string // GITHUB_API_URL
+	Repository      string // GITHUB_REPOSITORY
+	RepositoryName  string
+	EventName       string // GITHUB_EVENT_NAME
+	EventPath       string // GITHUB_EVENT_PATH
+	RepositoryOwner string // GITHUB_REPOSITORY_OWNER
+	RefName         string // GITHUB_REF_NAME
+	SHA             string // GITHUB_SHA
+	Actor           string // GITHUB_ACTOR
+	ServerURL       string // GITHUB_SERVER_URL
+	APIServerURL    string // GITHUB_API_URL
 }
 
 type GitHubPRInfo struct {
@@ -77,15 +89,15 @@ type PullRequestEvent struct {
 	Action string `json:"action"`
 }
 
-func gettPRInfo(env Environment) (GitHubPRInfo, error) {
+func gettPRInfo(env Environment, arg arg.Arg) (GitHubPRInfo, error) {
 	if env.EventPath != "" {
 		if prInfo, err := getPRInfoFromEventFile(env.EventPath); err == nil {
 			return prInfo, nil
 		}
-		fmt.Printf("⚠️  Failed to read from event file, trying API...\n")
+		log.Get().Debug("⚠️  Failed to read from event file, trying API...")
 	}
 
-	return getPRInfoFromAPI(env)
+	return getPRInfoFromAPI(env, arg)
 }
 
 func (srv Service) GetPRInfo() GitHubPRInfo {
@@ -107,7 +119,7 @@ func getPRInfoFromEventFile(eventPath string) (GitHubPRInfo, error) {
 	return event.PullRequest, nil
 }
 
-func getPRInfoFromAPI(env Environment) (GitHubPRInfo, error) {
+func getPRInfoFromAPI(env Environment, arg arg.Arg) (GitHubPRInfo, error) {
 	prInfo := GitHubPRInfo{}
 	//The for: refs/pull/{pr_number}/merge
 	prNumber, err := extractPRNumber(env.RefName, env.SHA)
@@ -122,7 +134,7 @@ func getPRInfoFromAPI(env Environment) (GitHubPRInfo, error) {
 		return prInfo, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "token "+env.Token)
+	req.Header.Set("Authorization", "token "+arg.GithubToken)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "mingyuans/gocov-threshold")
 

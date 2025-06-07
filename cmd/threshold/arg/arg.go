@@ -13,6 +13,7 @@ type Arg struct {
 	Path         string
 	Coverprofile string
 	LoggerLevel  string
+	GithubToken  string
 }
 
 // ParseArg parses command-line flags into an Arg struct.
@@ -27,6 +28,7 @@ func ParseArg() Arg {
 	a.Path = getActionInput("path")
 	a.Coverprofile = getActionInput("coverprofile")
 	a.LoggerLevel = getActionInput("logger-level")
+	a.GithubToken = getActionInput("token")
 	return a
 }
 

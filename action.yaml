@@ -18,6 +18,9 @@ inputs:
   logger-level:
     description: "logger level (debug, info, warn, error)"
     default: "info"
+  token:
+    description: "GitHub token for API access"
+    default: "${{ secrets.GITHUB_TOKEN }}"
 outputs:
   covdiff:
     description: "the coverage difference (0-100)"
