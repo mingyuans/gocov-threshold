@@ -13,7 +13,7 @@ jobs:
 
       - name: Go Test
         run: |
-          go test example/... -coverprofile=coverage.out
+          go test ./example/... -coverprofile=coverage.out
 
       - name: Coverage Threshold
         id: coverage_threshold
