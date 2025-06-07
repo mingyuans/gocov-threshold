@@ -11,7 +11,7 @@ import (
 )
 
 func (srv Service) DownloadDiff() (string, error) {
-	diffURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%s",
+	diffURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d",
 		srv.env.APIServerURL,
 		srv.env.RepositoryOwner,
 		srv.env.RepositoryName,
