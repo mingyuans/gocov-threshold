@@ -1,0 +1,26 @@
+name: "Go Coverage Threshold Action"
+description: "Show coverage difference between branches in a pull request"
+author: "Jimmy Yan"
+inputs:
+  path:
+    description: "path to git repo"
+    default: "."
+  coverprofile:
+    description: "path to coverage profile"
+  module:
+    description: "the Go module name"
+  ignore-main:
+    default: "true"
+    description: "ignore main package"
+  threshold:
+    description: "coverage threshold (0-100)"
+    default: "80"
+  logger-level:
+    description: "logger level (debug, info, warn, error)"
+    default: "info"
+outputs:
+  covdiff:
+    description: "the coverage difference (0-100)"
+runs:
+  using: "docker"
+  image: "Dockerfile"

@@ -1,0 +1,25 @@
+name: Integration Test
+
+on:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Go Test
+        run: |
+          go test example/... -coverprofile=coverage.out
+
+      - name: Coverage Threshold
+        id: coverage_threshold
+        uses: mingyuans/gocov-threshold@main
+        with:
+          path: .
+          coverprofile: coverage.out
+          module: github.com/mingyuans/gocov-threshold
+          logger-level: debug
