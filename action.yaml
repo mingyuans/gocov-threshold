@@ -20,7 +20,7 @@ inputs:
     default: "info"
   token:
     description: "GitHub token for API access"
-    default: "${{ secrets.GITHUB_TOKEN }}"
+    default: ${{ github.token }}
 outputs:
   covdiff:
     description: "the coverage difference (0-100)"

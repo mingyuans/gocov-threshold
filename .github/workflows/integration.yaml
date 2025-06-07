@@ -23,3 +23,4 @@ jobs:
           coverprofile: coverage.out
           module: github.com/mingyuans/gocov-threshold
           logger-level: debug
+          token: ${{ secrets.GITHUB_TOKEN }}
