@@ -9,8 +9,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const DiffFilePath = "pr.diff"
-
 func main() {
 	actionArg := model.ParseArg()
 	log.Init(actionArg.LoggerLevel)
