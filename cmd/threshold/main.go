@@ -27,6 +27,21 @@ func main() {
 		panic(fmt.Sprintf("Failed to download and save PR diff: %s", downloadErr.Error()))
 	}
 
-	diffManager.FilterStatements(diffBytes, actionArg.CoveragePath)
+	statements, err := diffManager.FilterStatements(diffBytes, actionArg.Coverprofile)
+	if err != nil {
+		log.Get().Fatal("Failed to filter statements", zap.Error(err))
+	}
 
+	var totalStatements = len(statements)
+	var coveredStatements = 0
+	for _, statement := range statements {
+		if statement.ExecutionCount > 0 {
+			coveredStatements++
+		}
+	}
+	coverage := float64(coveredStatements) * 100 / float64(totalStatements)
+	log.Get().Info("Coverage statistics",
+		zap.Int("total_statements", totalStatements),
+		zap.Int("covered_statements", coveredStatements),
+		zap.Float64("coverage_percentage", coverage))
 }
