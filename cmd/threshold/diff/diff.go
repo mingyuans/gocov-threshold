@@ -46,11 +46,14 @@ func (m Manager) FilterStatements(diffBytes []byte, coveragePath string) ([]mode
 	if loadErr != nil {
 		return nil, loadErr
 	}
+	covProfileBytes = nil // Free memory used by covProfileBytes
 
 	filteredStatements, unionErr := m.filterStatementsByPRDiff(diffBlocks, covStatements)
 	if unionErr != nil {
 		return nil, unionErr
 	}
+
+	diffBytes = nil // Free memory used by diffBytes
 	return m.filterStatementsByPatterns(filteredStatements)
 }
 
@@ -219,6 +222,10 @@ func (m Manager) filterStatementsForSpecifiedFile(statements []model.CovStatemen
 		statementCodeLines := codeLines[statement.Block.Start-1 : statement.Block.End]
 		if IsStatementIgnoreCoverByPatterns(statementCodeLines, m.conf.Statements.Exclude.Patterns) {
 			continue
+		}
+		if m.arg.PrintUncoveredLines {
+			// fill the CodeLines field of the statement
+			statement.CodeLines = statementCodeLines
 		}
 		includedStatements = append(includedStatements, statement)
 	}

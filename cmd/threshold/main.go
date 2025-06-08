@@ -8,6 +8,7 @@ import (
 	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
 	"github.com/mingyuans/gocov-threshold/cmd/threshold/pr"
 	"go.uber.org/zap"
+	"strings"
 )
 
 func main() {
@@ -37,6 +38,8 @@ func main() {
 		log.Get().Debug("Statements to calculate", zap.Any("statement", statement))
 		if statement.ExecutionCount > 0 {
 			coveredStatements++
+		} else if actionArg.PrintUncoveredLines {
+			core.Infof("Uncovered statement:%s\n%s", statement.FileName, strings.Join(statement.CodeLines, "\n"))
 		}
 	}
 	var coverage = 100.0
@@ -49,9 +52,7 @@ func main() {
 		zap.Float64("coverage_percentage", coverage))
 
 	if coverage < actionArg.Threshold {
-		log.Get().Fatal("Coverage below threshold",
-			zap.Float64("coverage", coverage),
-			zap.Float64("threshold", actionArg.Threshold))
+		core.SetFailedf("Coverage %.2f%% is below the threshold %.2f%%", coverage, actionArg.Threshold)
 	} else {
 		log.Get().Info("Coverage meets the threshold",
 			zap.Float64("coverage", coverage),

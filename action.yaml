@@ -21,6 +21,9 @@ inputs:
   conf:
     description: "path to config file"
     default: "gocov-conf.yaml"
+  print-uncovered-lines:
+    description: "print uncovered lines"
+    default: "false"
 outputs:
   gocov:
     description: "the coverage difference (0.00-100.00)"
