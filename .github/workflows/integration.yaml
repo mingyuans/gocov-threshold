@@ -28,6 +28,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           conf: gocov-conf.yaml
           threshold: 0
+          print-uncovered-lines: true
 
       - name: Comment
         uses: mshick/add-pr-comment@v2
