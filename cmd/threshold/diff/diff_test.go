@@ -160,7 +160,7 @@ func TestManager_filterStatementsForSpecifiedFile(t *testing.T) {
 		pwd := os.Getenv("PWD")
 		m := Manager{
 			arg: model.Arg{
-				Module: "mingyuans/gocov-threshold",
+				Module: "github.com/mingyuans/gocov-threshold",
 				Path:   fmt.Sprintf("%s/../../..", pwd),
 			},
 		}
@@ -168,21 +168,21 @@ func TestManager_filterStatementsForSpecifiedFile(t *testing.T) {
 		statements := []model.CovStatement{}
 		statements = append(statements,
 			model.CovStatement{
-				FileName: "mingyuans/gocov-threshold/example/main.go",
+				FileName: "github.com/mingyuans/gocov-threshold/example/main.go",
 				Block: model.Block{
 					Start: 14,
 					End:   16,
 				},
 			},
 			model.CovStatement{
-				FileName: "mingyuans/gocov-threshold/example/main.go",
+				FileName: "github.com/mingyuans/gocov-threshold/example/main.go",
 				Block: model.Block{
-					Start: 22,
-					End:   25,
+					Start: 27,
+					End:   30,
 				},
 			})
 
-		filteredStatements, err := m.filterStatementsForSpecifiedFile(statements, "mingyuans/gocov-threshold/example/main.go")
+		filteredStatements, err := m.filterStatementsForSpecifiedFile(statements, "github.com/mingyuans/gocov-threshold/example/main.go")
 		require.NoError(t, err)
 		require.Len(t, filteredStatements, 1, "Expected only one statement to match the diff block")
 		require.Equal(t, 14, filteredStatements[0].Block.Start, "Expected the start of the block to be 14")
@@ -235,10 +235,16 @@ func TestManager_FilterStatements(t *testing.T) {
 		pwd := os.Getenv("PWD")
 		m := Manager{
 			arg: model.Arg{
-				Module: "mingyuans/gocov-threshold",
+				Module: "github.com/mingyuans/gocov-threshold",
 				Path:   fmt.Sprintf("%s/../../..", pwd),
 			},
-			conf: model.Conf{},
+			conf: model.Conf{
+				Files: model.FileConf{
+					Include: model.FilePattern{
+						Dirs: []string{"example"},
+					},
+				},
+			},
 		}
 
 		diffBytes := loadTestData(t, "example-diff.diff")
@@ -263,7 +269,7 @@ func TestManager_FilterStatements(t *testing.T) {
 		coveragePath := "../../../testdata/example-overage.out"
 
 		statements, err := m.FilterStatements(diffBytes, coveragePath)
-		require.Error(t, err)
+		require.NoError(t, err)
 		require.Empty(t, statements)
 	})
 }

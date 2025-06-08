@@ -158,9 +158,6 @@ func (m Manager) filterStatementsByPatterns(covStatements []model.CovStatement) 
 	groupedStatements := make(map[string][]model.CovStatement)
 	for _, statement := range covStatements {
 		fileName := strings.TrimPrefix(statement.FileName, m.arg.Module+"/")
-		if _, ok := groupedStatements[fileName]; !ok {
-			groupedStatements[fileName] = []model.CovStatement{statement}
-		}
 		groupedStatements[fileName] = append(groupedStatements[fileName], statement)
 	}
 

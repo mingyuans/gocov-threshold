@@ -11,4 +11,4 @@ clean-coverage:
 
 diff:
 	@echo "▶️  Running diff for coverage"
-	@git diff
+	@git diff 67e52b27 4518e2cc > pr.diff
