@@ -39,7 +39,10 @@ func main() {
 			coveredStatements++
 		}
 	}
-	coverage := float64(coveredStatements) * 100 / float64(totalStatements)
+	var coverage = 100.0
+	if totalStatements != 0 {
+		coverage = float64(coveredStatements) * 100 / float64(totalStatements)
+	}
 	log.Get().Info("Coverage statistics",
 		zap.Int("total_statements", totalStatements),
 		zap.Int("covered_statements", coveredStatements),
