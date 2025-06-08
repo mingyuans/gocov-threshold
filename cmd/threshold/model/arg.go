@@ -24,7 +24,7 @@ func ParseArg() Arg {
 	a.Module = getActionInput("module")
 	a.Threshold = 80
 	if threshold := getActionInput("threshold"); threshold != "" {
-		_, scanErr := fmt.Sscanf(threshold, "%.2f", &a.Threshold)
+		_, scanErr := fmt.Sscanf(threshold, "%f", &a.Threshold)
 		if scanErr != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Error parsing threshold: %v\n", scanErr)
 			os.Exit(1)
