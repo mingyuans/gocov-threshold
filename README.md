@@ -95,3 +95,7 @@ func exampleFunc2(value int) {
 	}
 }
 ```
+
+# Thanks
+* https://github.com/Azure/gocover
+* https://github.com/PanagiotisPtr/cov-diff
