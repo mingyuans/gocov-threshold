@@ -35,6 +35,7 @@ func main() {
 	var totalStatements = len(statements)
 	var coveredStatements = 0
 	for _, statement := range statements {
+		log.Get().Debug("Statement", zap.Any("statement", statement))
 		if statement.ExecutionCount > 0 {
 			coveredStatements++
 		}
