@@ -25,8 +25,8 @@ inputs:
     description: "path to config file"
     default: "gocov-conf.yaml"
 outputs:
-  covdiff:
-    description: "the coverage difference (0-100)"
+  gocov:
+    description: "the coverage difference (0.00-100.00)"
 runs:
   using: "docker"
   image: "Dockerfile"

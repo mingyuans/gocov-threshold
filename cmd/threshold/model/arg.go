@@ -9,7 +9,7 @@ import (
 type Arg struct {
 	IgnoreMain   bool
 	Module       string
-	Threshold    int
+	Threshold    float64
 	Path         string
 	Coverprofile string
 	LoggerLevel  string

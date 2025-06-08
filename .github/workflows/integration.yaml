@@ -25,3 +25,9 @@ jobs:
           logger-level: debug
           token: ${{ secrets.GITHUB_TOKEN }}
           conf: gocov-conf.yaml
+
+      - name: Comment
+        uses: mshick/add-pr-comment@v2
+        with:
+          message: |
+            Coverage on new code: ${{ steps.coverage_threshold.outputs.gocov }}%

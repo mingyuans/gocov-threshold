@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/actions-go/toolkit/core"
 	"github.com/mingyuans/gocov-threshold/cmd/threshold/diff"
 	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
 	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
@@ -43,4 +44,15 @@ func main() {
 		zap.Int("total_statements", totalStatements),
 		zap.Int("covered_statements", coveredStatements),
 		zap.Float64("coverage_percentage", coverage))
+
+	if coverage < actionArg.Threshold {
+		log.Get().Fatal("Coverage below threshold",
+			zap.Float64("coverage", coverage),
+			zap.Float64("threshold", actionArg.Threshold))
+	} else {
+		log.Get().Info("Coverage meets the threshold",
+			zap.Float64("coverage", coverage),
+			zap.Float64("threshold", actionArg.Threshold))
+	}
+	core.SetOutput("gocov", fmt.Sprintf("%.2f", coverage))
 }
