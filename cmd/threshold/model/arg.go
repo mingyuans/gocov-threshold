@@ -20,7 +20,7 @@ type Arg struct {
 func ParseArg() Arg {
 	var a Arg
 	a.Module = getActionInput("module")
-	a.Threshold = 80
+	a.Threshold = 0
 	if threshold := getActionInput("threshold"); threshold != "" {
 		_, scanErr := fmt.Sscanf(threshold, "%f", &a.Threshold)
 		if scanErr != nil {

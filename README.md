@@ -37,7 +37,7 @@ It supports global patterns and annotations to ignore certain files or lines fro
 | `path`         | path to git repo                        | No       | `.`     |
 | `coverprofile` | path to coverage profile                | Yes      | ``      |
 | `module`       | the Go module name                      | Yes      | ``      |
-| `threshold`    | coverage threshold (0-100)              | No       | `80`    |
+| `threshold`    | coverage threshold (0-100)              | No       | `0`     |
 | `logger-level` | logger level (debug, info, warn, error) | No       | `info`  |
 | `conf`         | the config file                         | Yes      | ``      |
 
