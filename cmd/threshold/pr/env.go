@@ -3,8 +3,8 @@ package pr
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/mingyuans/gocov-threshold/cmd/threshold/arg"
 	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
+	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
 	"net/http"
 	"os"
 	"strconv"
@@ -19,6 +19,10 @@ func getPREnvironment() Environment {
 	parts := strings.Split(repository, "/")
 	if len(parts) == 2 {
 		repositoryName = parts[1]
+	}
+
+	if len(repositoryName) == 0 {
+		log.Get().Fatal("GITHUB_REPOSITORY environment variable is not set or invalid. Expected format: 'owner/repo'")
 	}
 
 	return Environment{
@@ -89,7 +93,7 @@ type PullRequestEvent struct {
 	Action string `json:"action"`
 }
 
-func gettPRInfo(env Environment, arg arg.Arg) (GitHubPRInfo, error) {
+func gettPRInfo(env Environment, arg model.Arg) (GitHubPRInfo, error) {
 	if env.EventPath != "" {
 		if prInfo, err := getPRInfoFromEventFile(env.EventPath); err == nil {
 			return prInfo, nil
@@ -119,7 +123,7 @@ func getPRInfoFromEventFile(eventPath string) (GitHubPRInfo, error) {
 	return event.PullRequest, nil
 }
 
-func getPRInfoFromAPI(env Environment, arg arg.Arg) (GitHubPRInfo, error) {
+func getPRInfoFromAPI(env Environment, arg model.Arg) (GitHubPRInfo, error) {
 	prInfo := GitHubPRInfo{}
 	//The for: refs/pull/{pr_number}/merge
 	prNumber, err := extractPRNumber(env.RefName, env.SHA)
@@ -149,7 +153,6 @@ func getPRInfoFromAPI(env Environment, arg arg.Arg) (GitHubPRInfo, error) {
 		return prInfo, fmt.Errorf("API request failed with status %d", resp.StatusCode)
 	}
 
-	// 解析响应
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&prInfo); decodeErr != nil {
 		return prInfo, fmt.Errorf("failed to decode response: %w", decodeErr)
 	}

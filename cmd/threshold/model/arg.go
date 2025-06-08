@@ -1,4 +1,4 @@
-package arg
+package model
 
 import (
 	"fmt"
@@ -14,6 +14,7 @@ type Arg struct {
 	Coverprofile string
 	LoggerLevel  string
 	GithubToken  string
+	ConfPath     string
 }
 
 // ParseArg parses command-line flags into an Arg struct.
@@ -29,6 +30,7 @@ func ParseArg() Arg {
 	a.Coverprofile = getActionInput("coverprofile")
 	a.LoggerLevel = getActionInput("logger-level")
 	a.GithubToken = getActionInput("token")
+	a.ConfPath = getActionInput("conf")
 	return a
 }
 

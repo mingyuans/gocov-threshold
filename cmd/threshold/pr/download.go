@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func (srv Service) DownloadDiff() (string, error) {
+func (srv Service) DownloadDiff() ([]byte, error) {
 	diffURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d",
 		srv.env.APIServerURL,
 		srv.env.RepositoryOwner,
@@ -22,7 +22,7 @@ func (srv Service) DownloadDiff() (string, error) {
 	// Create request
 	req, err := http.NewRequest("GET", diffURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return []byte{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set authentication headers
@@ -34,25 +34,27 @@ func (srv Service) DownloadDiff() (string, error) {
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to download diff: %w", err)
+		return []byte{}, fmt.Errorf("failed to download diff: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("diff download failed with status %d", resp.StatusCode)
+		return []byte{}, fmt.Errorf("diff download failed with status %d", resp.StatusCode)
 	}
 
 	// Read response content
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read diff content: %w", err)
+		return []byte{}, fmt.Errorf("failed to read diff content: %w", err)
 	}
 
-	return string(content), nil
+	log.Get().Debug("Downloading diff from URL", zap.String("diffContent", string(content)))
+
+	return content, nil
 }
 
-func saveDiffToFile(content, filename string) error {
-	return os.WriteFile(filename, []byte(content), 0644)
+func saveDiffToFile(content []byte, filename string) error {
+	return os.WriteFile(filename, content, 0644)
 }
 
 func (srv Service) DownloadAndSaveDiff(filename string) error {
@@ -60,8 +62,6 @@ func (srv Service) DownloadAndSaveDiff(filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to download diff: %w", err)
 	}
-
-	log.Get().Debug("Downloading diff from URL", zap.String("diffContent", diffContent))
 
 	if err := saveDiffToFile(diffContent, filename); err != nil {
 		return fmt.Errorf("failed to save diff to file: %w", err)

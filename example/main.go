@@ -1,11 +1,16 @@
 package main
 
-import "math/rand"
+import (
+	"fmt"
+	"math/rand"
+	"sync"
+)
 
 func main() {
 	value := rand.Intn(100)
 	exampleFunc(value)
 	exampleFunc2(value)
+	exampleFunc3(value)
 }
 
 func exampleFunc(value int) {
@@ -20,6 +25,16 @@ func exampleFunc2(value int) {
 	if value%3 == 0 {
 		println("Divisible by 3")
 	} else {
+		// gocover:ignore
 		println("Not divisible by 3")
 	}
+}
+
+func exampleFunc3(value int) {
+	// init a mutex and lock
+	var mu = sync.Mutex{}
+	mu.Lock()
+	fmt.Println("Mutex locked")
+	defer mu.Unlock()
+	fmt.Println("Mutex unlocked")
 }

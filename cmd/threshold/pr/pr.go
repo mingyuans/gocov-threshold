@@ -1,14 +1,14 @@
 package pr
 
-import "github.com/mingyuans/gocov-threshold/cmd/threshold/arg"
+import "github.com/mingyuans/gocov-threshold/cmd/threshold/model"
 
 type Service struct {
 	env      Environment
 	info     GitHubPRInfo
-	inputArg arg.Arg
+	inputArg model.Arg
 }
 
-func NewService(inputArg arg.Arg) *Service {
+func NewService(inputArg model.Arg) *Service {
 	env := getPREnvironment()
 	info, getInfoErr := gettPRInfo(env, inputArg)
 	if getInfoErr != nil {

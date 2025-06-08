@@ -21,6 +21,9 @@ inputs:
   token:
     description: "GitHub token for API access"
     default: ${{ github.token }}
+  conf:
+    description: "path to config file"
+    default: "gocov-threshold-conf.yml"
 outputs:
   covdiff:
     description: "the coverage difference (0-100)"
