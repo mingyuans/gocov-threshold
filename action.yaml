@@ -23,7 +23,7 @@ inputs:
     default: ${{ github.token }}
   conf:
     description: "path to config file"
-    default: "gocov-threshold-conf.yml"
+    default: "gocov-conf.yaml"
 outputs:
   covdiff:
     description: "the coverage difference (0-100)"

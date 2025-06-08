@@ -24,3 +24,4 @@ jobs:
           module: github.com/mingyuans/gocov-threshold
           logger-level: debug
           token: ${{ secrets.GITHUB_TOKEN }}
+          conf: gocov-conf.yaml
