@@ -49,9 +49,7 @@ func main() {
 		zap.Float64("coverage_percentage", coverage))
 
 	if coverage < actionArg.Threshold {
-		log.Get().Fatal("Coverage below threshold",
-			zap.Float64("coverage", coverage),
-			zap.Float64("threshold", actionArg.Threshold))
+		core.SetFailedf("Coverage %.2f%% is below the threshold %.2f%%", coverage, actionArg.Threshold)
 	} else {
 		log.Get().Info("Coverage meets the threshold",
 			zap.Float64("coverage", coverage),
