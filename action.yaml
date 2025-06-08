@@ -9,9 +9,6 @@ inputs:
     description: "path to coverage profile"
   module:
     description: "the Go module name"
-  ignore-main:
-    default: "true"
-    description: "ignore main package"
   threshold:
     description: "coverage threshold (0.00-100.00)"
     default: "80"

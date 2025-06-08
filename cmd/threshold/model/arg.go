@@ -7,7 +7,6 @@ import (
 )
 
 type Arg struct {
-	IgnoreMain   bool
 	Module       string
 	Threshold    float64
 	Path         string
@@ -20,7 +19,6 @@ type Arg struct {
 // ParseArg parses command-line flags into an Arg struct.
 func ParseArg() Arg {
 	var a Arg
-	a.IgnoreMain = getActionInput("ignore-main") == "true"
 	a.Module = getActionInput("module")
 	a.Threshold = 80
 	if threshold := getActionInput("threshold"); threshold != "" {
