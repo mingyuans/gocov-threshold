@@ -18,6 +18,8 @@ type CovStatement struct {
 	Block          Block  `json:"block"`
 	StatementCount int    `json:"statement_count"`
 	ExecutionCount int    `json:"execution_count"`
+	// Only filled after filtering by patterns
+	CodeLines []string `json:"code_lines"`
 }
 
 type PRDiffBlock struct {
