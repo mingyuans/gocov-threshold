@@ -38,3 +38,12 @@ func exampleFunc3(value int) {
 	defer mu.Unlock()
 	fmt.Println("Mutex unlocked")
 }
+
+func exampleFunc4(value int) {
+	// init a mutex and lock
+	var mu = sync.Mutex{}
+	mu.Lock()
+	fmt.Println("Mutex locked")
+	defer mu.Unlock()
+	fmt.Println("Mutex unlocked")
+}
