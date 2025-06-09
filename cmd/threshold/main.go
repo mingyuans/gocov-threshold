@@ -39,7 +39,11 @@ func main() {
 		if statement.ExecutionCount > 0 {
 			coveredStatements++
 		} else if actionArg.PrintUncoveredLines {
-			core.Infof("Uncovered statement:%s\n%s", statement.FileName, strings.Join(statement.CodeLines, "\n"))
+			core.Infof("Uncovered statement:%s line(%d,%d)\n%s",
+				statement.FileName,
+				statement.Hunk.Start,
+				statement.Hunk.End,
+				strings.Join(statement.CodeLines, "\n"))
 		}
 	}
 	var coverage = 100.0
