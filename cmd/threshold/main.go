@@ -38,12 +38,6 @@ func main() {
 		log.Get().Debug("Statements to calculate", zap.Any("statement", statement))
 		if statement.ExecutionCount > 0 {
 			coveredStatements++
-		} else if actionArg.PrintUncoveredLines {
-			core.Infof("Uncovered statement:%s line(%d,%d)\n%s",
-				statement.FileName,
-				statement.Hunk.Start,
-				statement.Hunk.End,
-				strings.Join(statement.CodeLines, "\n"))
 		}
 	}
 	var coverage = 100.0
@@ -62,5 +56,18 @@ func main() {
 			zap.Float64("coverage", coverage),
 			zap.Float64("threshold", actionArg.Threshold))
 	}
+
+	if actionArg.PrintUncoveredLines {
+		for _, statement := range statements {
+			if statement.ExecutionCount == 0 {
+				core.Infof("\nUncovered statement:%s line(%d,%d)\n%s",
+					statement.FileName,
+					statement.Hunk.Start,
+					statement.Hunk.End,
+					strings.Join(statement.CodeLines, "\n"))
+			}
+		}
+	}
+
 	core.SetOutput("gocov", fmt.Sprintf("%.2f", coverage))
 }
