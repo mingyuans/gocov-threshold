@@ -12,5 +12,6 @@ require (
 	github.com/actions-go/toolkit v0.0.0-20231022202615-3973644be7a1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/sourcegraph/go-diff v0.7.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 )
