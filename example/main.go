@@ -36,7 +36,9 @@ func exampleFunc3(value int) {
 	mu.Lock()
 	fmt.Println("Mutex locked")
 	defer mu.Unlock()
-	fmt.Println("Testing Mutex unlocked")
+	if value%5 == 0 {
+		fmt.Println("Divisible by 5")
+	}
 }
 
 func exampleFunc4(value int) {
