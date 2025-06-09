@@ -36,7 +36,7 @@ func exampleFunc3(value int) {
 	mu.Lock()
 	fmt.Println("Mutex locked")
 	defer mu.Unlock()
-	fmt.Println("Mutex unlocked")
+	fmt.Println("Testing Mutex unlocked")
 }
 
 func exampleFunc4(value int) {
