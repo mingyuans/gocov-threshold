@@ -37,10 +37,10 @@ func TestManager_union(t *testing.T) {
 			conf: model.Conf{},
 		}
 
-		tempDiffBlocks := make([]model.PRDiffBlock, 0)
-		tempDiffBlocks = append(tempDiffBlocks, model.PRDiffBlock{
+		tempDiffBlocks := make([]model.PRHunk, 0)
+		tempDiffBlocks = append(tempDiffBlocks, model.PRHunk{
 			FileName: "example/main.go",
-			Block: model.Block{
+			Hunk: model.Hunk{
 				Start: 10,
 				End:   15,
 			},
@@ -49,11 +49,11 @@ func TestManager_union(t *testing.T) {
 		tempCovStatements := make([]model.CovStatement, 0)
 		tempCovStatements = append(tempCovStatements, model.CovStatement{
 			FileName: "mingyuans/gocov-threshold/example/main.go",
-			Block:    model.Block{Start: 10, End: 15},
+			Hunk:     model.Hunk{Start: 10, End: 15},
 		})
 		tempCovStatements = append(tempCovStatements, model.CovStatement{
 			FileName: "mingyuans/gocov-threshold/example/cmd.go",
-			Block:    model.Block{Start: 11, End: 12},
+			Hunk:     model.Hunk{Start: 11, End: 12},
 		})
 
 		statements, err := m.filterStatementsByPRDiff(tempDiffBlocks, tempCovStatements)
@@ -145,7 +145,7 @@ func TestManager_filterStatementsForSpecifiedFile(t *testing.T) {
 		statements = append(statements,
 			model.CovStatement{
 				FileName: "mingyuans/gocov-threshold/example/ignore.go",
-				Block: model.Block{
+				Hunk: model.Hunk{
 					Start: 10,
 					End:   15,
 				},
@@ -169,14 +169,14 @@ func TestManager_filterStatementsForSpecifiedFile(t *testing.T) {
 		statements = append(statements,
 			model.CovStatement{
 				FileName: "github.com/mingyuans/gocov-threshold/example/main.go",
-				Block: model.Block{
+				Hunk: model.Hunk{
 					Start: 14,
 					End:   16,
 				},
 			},
 			model.CovStatement{
 				FileName: "github.com/mingyuans/gocov-threshold/example/main.go",
-				Block: model.Block{
+				Hunk: model.Hunk{
 					Start: 27,
 					End:   30,
 				},
@@ -185,7 +185,7 @@ func TestManager_filterStatementsForSpecifiedFile(t *testing.T) {
 		filteredStatements, err := m.filterStatementsForSpecifiedFile(statements, "github.com/mingyuans/gocov-threshold/example/main.go")
 		require.NoError(t, err)
 		require.Len(t, filteredStatements, 1, "Expected only one statement to match the diff block")
-		require.Equal(t, 14, filteredStatements[0].Block.Start, "Expected the start of the block to be 14")
+		require.Equal(t, 14, filteredStatements[0].Hunk.Start, "Expected the start of the block to be 14")
 	})
 
 	t.Run("ignore statement by global custom regex", func(t *testing.T) {
@@ -208,14 +208,14 @@ func TestManager_filterStatementsForSpecifiedFile(t *testing.T) {
 		statements = append(statements,
 			model.CovStatement{
 				FileName: "mingyuans/gocov-threshold/example/main.go",
-				Block: model.Block{
+				Hunk: model.Hunk{
 					Start: 14,
 					End:   16,
 				},
 			},
 			model.CovStatement{
 				FileName: "mingyuans/gocov-threshold/example/main.go",
-				Block: model.Block{
+				Hunk: model.Hunk{
 					Start: 33,
 					End:   40,
 				},
@@ -224,7 +224,7 @@ func TestManager_filterStatementsForSpecifiedFile(t *testing.T) {
 		filteredStatements, err := m.filterStatementsForSpecifiedFile(statements, "mingyuans/gocov-threshold/example/main.go")
 		require.NoError(t, err)
 		require.Len(t, filteredStatements, 1, "Expected only one statement to match the diff block")
-		require.Equal(t, 14, filteredStatements[0].Block.Start, "Expected the start of the block to be 14")
+		require.Equal(t, 14, filteredStatements[0].Hunk.Start, "Expected the start of the block to be 14")
 	})
 }
 

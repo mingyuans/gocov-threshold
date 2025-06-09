@@ -57,7 +57,7 @@ func (m Manager) FilterStatements(diffBytes []byte, coveragePath string) ([]mode
 	return m.filterStatementsByPatterns(filteredStatements)
 }
 
-func (m Manager) filterStatementsByPRDiff(diffBlocks []model.PRDiffBlock, covStatements []model.CovStatement) ([]model.CovStatement, error) {
+func (m Manager) filterStatementsByPRDiff(diffBlocks []model.PRHunk, covStatements []model.CovStatement) ([]model.CovStatement, error) {
 	filteredStatements := make([]model.CovStatement, 0)
 	for _, diffBlock := range diffBlocks {
 		if !m.isFileIncluded(diffBlock.FileName) {
@@ -72,7 +72,7 @@ func (m Manager) filterStatementsByPRDiff(diffBlocks []model.PRDiffBlock, covSta
 			}
 
 			// Check if statement's range overlaps with diffBlock's range
-			if statement.Block.Start <= diffBlock.Block.End && statement.Block.End >= diffBlock.Block.Start {
+			if statement.Hunk.Start <= diffBlock.Hunk.End && statement.Hunk.End >= diffBlock.Hunk.Start {
 				filteredStatements = append(filteredStatements, statement)
 			}
 		}
@@ -210,16 +210,16 @@ func (m Manager) filterStatementsForSpecifiedFile(statements []model.CovStatemen
 	includedStatements := make([]model.CovStatement, 0)
 	for _, statement := range statements {
 		// Check if the statement's block is within the code lines
-		if statement.Block.Start < 1 || statement.Block.End > len(codeLines) {
+		if statement.Hunk.Start < 1 || statement.Hunk.End > len(codeLines) {
 			log.Get().Debug("Statement block out of range",
 				zap.String("fileName", fileName),
-				zap.Int("start", statement.Block.Start),
-				zap.Int("end", statement.Block.End))
+				zap.Int("start", statement.Hunk.Start),
+				zap.Int("end", statement.Hunk.End))
 			continue // Skip this statement if its block is out of range
 		}
 
 		// Get the code lines for the statement's block
-		statementCodeLines := codeLines[statement.Block.Start-1 : statement.Block.End]
+		statementCodeLines := codeLines[statement.Hunk.Start-1 : statement.Hunk.End]
 		if IsStatementIgnoreCoverByPatterns(statementCodeLines, m.conf.Statements.Exclude.Patterns) {
 			continue
 		}

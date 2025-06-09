@@ -4,27 +4,28 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	godiff "github.com/sourcegraph/go-diff/diff"
 	"strconv"
 	"strings"
 )
 
-type Block struct {
+type Hunk struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
 }
 
 type CovStatement struct {
 	FileName       string `json:"file_name"`
-	Block          Block  `json:"block"`
+	Hunk           Hunk   `json:"hunk"`
 	StatementCount int    `json:"statement_count"`
 	ExecutionCount int    `json:"execution_count"`
 	// Only filled after filtering by patterns
 	CodeLines []string `json:"code_lines"`
 }
 
-type PRDiffBlock struct {
+type PRHunk struct {
 	FileName string `json:"file_name"`
-	Block    Block  `json:"block"`
+	Hunk     Hunk   `json:"hunk"`
 }
 
 func LoadCovStatementsFromCovProfile(covFileBytes []byte) ([]CovStatement, error) {
@@ -77,7 +78,7 @@ func LoadCovStatementsFromCovProfile(covFileBytes []byte) ([]CovStatement, error
 
 		covStatements = append(covStatements, CovStatement{
 			FileName: fileName,
-			Block: Block{
+			Hunk: Hunk{
 				Start: startLine,
 				End:   endLine,
 			},
@@ -91,52 +92,40 @@ func LoadCovStatementsFromCovProfile(covFileBytes []byte) ([]CovStatement, error
 	return covStatements, nil
 }
 
-func LoadPRDiffBlocksFromDiffFile(diffFileBytes []byte) ([]PRDiffBlock, error) {
-	var diffBlocks []PRDiffBlock
-	scanner := bufio.NewScanner(bytes.NewReader(diffFileBytes))
-	var currentFile string
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "diff --git") {
-			// New file section starts
-			parts := strings.Split(line, " ")
-			if len(parts) >= 3 {
-				currentFile = strings.TrimPrefix(parts[2], "a/")
+func LoadPRDiffBlocksFromDiffFile(diffFileBytes []byte) ([]PRHunk, error) {
+	var prHunks []PRHunk
+	fileDiff, parseErr := godiff.ParseMultiFileDiff(diffFileBytes)
+	if parseErr != nil {
+		return nil, fmt.Errorf("failed to parse diff fd: %w", parseErr)
+	}
+	for _, fd := range fileDiff {
+		newFileName := strings.TrimPrefix(fd.NewName, "b/")
+		for _, hunk := range fd.Hunks {
+			var unifiedOffset = getUnifiedOffsetFromHunk(*hunk)
+			blockStart := hunk.NewStartLine + unifiedOffset
+			prHunk := PRHunk{
+				FileName: newFileName,
+				Hunk: Hunk{
+					Start: int(blockStart),
+					End:   int(blockStart + hunk.NewLines - unifiedOffset),
+				},
 			}
+			prHunks = append(prHunks, prHunk)
+		}
+	}
+	return prHunks, nil
+}
+
+func getUnifiedOffsetFromHunk(hunk godiff.Hunk) int32 {
+	var unifiedOffset int32 = 0
+	lines := bytes.Split(hunk.Body, []byte{'\n'})
+	for _, line := range lines {
+		if len(line) == 0 || (line[0] != '+' && line[0] != '-') {
+			unifiedOffset++
 			continue
 		}
-		if strings.HasPrefix(line, "@@") {
-			// Block of code starts
-			blockPartsInNewFile := strings.Split(line, " ")
-			if len(blockPartsInNewFile) < 2 {
-				continue
-			}
-			blockRangeInNewFile := blockPartsInNewFile[2]
-			blockPartsInNewFile = strings.Split(blockRangeInNewFile, ",")
-			if len(blockPartsInNewFile) < 2 {
-				continue
-			}
-			startLineStr := strings.TrimPrefix(blockPartsInNewFile[0], "+")
-			startLine, err := strconv.Atoi(startLineStr)
-			if err != nil {
-				continue
-			}
-			endLineStr := blockPartsInNewFile[1]
-			endLine, err := strconv.Atoi(endLineStr)
-			if err != nil {
-				continue
-			}
-			diffBlocks = append(diffBlocks, PRDiffBlock{
-				FileName: currentFile,
-				Block: Block{
-					Start: startLine,
-					End:   startLine + endLine - 1,
-				},
-			})
-		}
+		// If we encounter a line that starts with '+' or '-', we stop counting
+		break
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to scan diff file: %w", err)
-	}
-	return diffBlocks, nil
+	return unifiedOffset
 }

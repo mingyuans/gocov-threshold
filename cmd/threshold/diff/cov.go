@@ -23,10 +23,10 @@ func (m Manager) getCovStatement(statement model.CovStatement) ([]string, error)
 	scanner := bufio.NewScanner(file)
 	lineNum := 1
 	for scanner.Scan() {
-		if lineNum >= statement.Block.Start && lineNum <= statement.Block.End {
+		if lineNum >= statement.Hunk.Start && lineNum <= statement.Hunk.End {
 			codeLines = append(codeLines, scanner.Text())
 		}
-		if lineNum > statement.Block.End {
+		if lineNum > statement.Hunk.End {
 			break
 		}
 		lineNum++
