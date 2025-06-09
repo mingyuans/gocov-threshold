@@ -57,6 +57,9 @@ func main() {
 			zap.Float64("threshold", actionArg.Threshold))
 	}
 
+	// Ensure that the logger is flushed before exiting
+	_ = log.Get().Sync()
+
 	if actionArg.PrintUncoveredLines {
 		for _, statement := range statements {
 			if statement.ExecutionCount == 0 {
