@@ -1,0 +1,2123 @@
+diff --git a/.github/workflows/integration.yaml b/.github/workflows/integration.yaml
+new file mode 100644
+index 0000000..7015c2d
+--- /dev/null
++++ b/.github/workflows/integration.yaml
+@@ -0,0 +1,26 @@
++name: Integration Test
++
++on:
++  pull_request:
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v3
++        with:
++          fetch-depth: 0
++
++      - name: Go Test
++        run: |
++          go test ./example/... -coverprofile=coverage.out
++
++      - name: Coverage Threshold
++        id: coverage_threshold
++        uses: mingyuans/gocov-threshold@dev
++        with:
++          path: .
++          coverprofile: coverage.out
++          module: github.com/mingyuans/gocov-threshold
++          logger-level: debug
++          token: ${{ secrets.GITHUB_TOKEN }}
+\ No newline at end of file
+diff --git a/.gitignore b/.gitignore
+index aaadf73..d9dc3ff 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -13,7 +13,7 @@
+
+ # Code coverage profiles and other test artifacts
+ *.out
+-coverage.*
++example/coverage.out
+ *.coverprofile
+ profile.cov
+
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..846b874
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,12 @@
++FROM golang:1.24-alpine3.21
++
++WORKDIR /gocov-threshold
++COPY . /gocov-threshold
++
++
++RUN go mod download
++RUN go mod tidy
++
++RUN cd cmd/threshold && go install
++
++CMD ["threshold"]
+\ No newline at end of file
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..89e8ad0
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,14 @@
++
++
++
++TEST_DIR ?= ./example/...
++test:
++	@echo "▶️  Running tests with coverage for: $(TEST_DIR)"
++	@go test -coverprofile=coverage.out $(TEST_DIR)
++
++clean-coverage:
++	@rm -f coverage.out coverage.html
++
++diff:
++	@echo "▶️  Running diff for coverage"
++	@git diff
+\ No newline at end of file
+diff --git a/action.yaml b/action.yaml
+new file mode 100644
+index 0000000..347e27a
+--- /dev/null
++++ b/action.yaml
+@@ -0,0 +1,32 @@
++name: "Go Coverage Threshold Action"
++description: "Show coverage difference between branches in a pull request"
++author: "Jimmy Yan"
++inputs:
++  path:
++    description: "path to git repo"
++    default: "."
++  coverprofile:
++    description: "path to coverage profile"
++  module:
++    description: "the Go module name"
++  ignore-main:
++    default: "true"
++    description: "ignore main package"
++  threshold:
++    description: "coverage threshold (0-100)"
++    default: "80"
++  logger-level:
++    description: "logger level (debug, info, warn, error)"
++    default: "info"
++  token:
++    description: "GitHub token for API access"
++    default: ${{ github.token }}
++  conf:
++    description: "path to config file"
++    default: "gocov-threshold-conf.yml"
++outputs:
++  covdiff:
++    description: "the coverage difference (0-100)"
++runs:
++  using: "docker"
++  image: "Dockerfile"
+diff --git a/cmd/threshold/diff/cov.go b/cmd/threshold/diff/cov.go
+new file mode 100644
+index 0000000..f377f09
+--- /dev/null
++++ b/cmd/threshold/diff/cov.go
+@@ -0,0 +1,36 @@
++package diff
++
++import (
++	"bufio"
++	"fmt"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
++	"os"
++	"strings"
++)
++
++func (m Manager) getCovStatement(statement model.CovStatement) ([]string, error) {
++	// Remove the module prefix from the file name
++	fileName := strings.TrimPrefix(statement.FileName, m.arg.Module+"/")
++	codeFilePath := fmt.Sprintf("%s/%s", m.arg.Path, fileName)
++
++	file, err := os.Open(codeFilePath)
++	if err != nil {
++		return nil, fmt.Errorf("failed to open file %s: %w", codeFilePath, err)
++	}
++	defer file.Close()
++
++	var codeLines []string
++	scanner := bufio.NewScanner(file)
++	lineNum := 1
++	for scanner.Scan() {
++		if lineNum >= statement.Block.Start && lineNum <= statement.Block.End {
++			codeLines = append(codeLines, scanner.Text())
++		}
++		if lineNum > statement.Block.End {
++			break
++		}
++		lineNum++
++	}
++	//statement.Code = strings.Join(codeLines, "\n")
++	return codeLines, nil
++}
+diff --git a/cmd/threshold/diff/diff.go b/cmd/threshold/diff/diff.go
+new file mode 100644
+index 0000000..767792a
+--- /dev/null
++++ b/cmd/threshold/diff/diff.go
+@@ -0,0 +1,247 @@
++package diff
++
++import (
++	"bufio"
++	"fmt"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
++	"go.uber.org/zap"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++)
++
++const ConcurrencyLimit = 10 // Limit the number of concurrent goroutines
++
++type Manager struct {
++	conf model.Conf
++	arg  model.Arg
++}
++
++func NewManager(arg model.Arg) *Manager {
++	conf, loadConfErr := model.LoadConfFromYAML(arg.ConfPath)
++	if loadConfErr != nil {
++		log.Get().Fatal("Failed to load configuration", zap.Error(loadConfErr))
++	}
++
++	return &Manager{
++		conf: conf,
++		arg:  arg,
++	}
++}
++
++func (m Manager) FilterStatements(diffBytes []byte, coveragePath string) ([]model.CovStatement, error) {
++	diffBlocks, parseErr := model.LoadPRDiffBlocksFromDiffFile(diffBytes)
++	if parseErr != nil {
++		return nil, parseErr
++	}
++
++	covProfileBytes, readErr := os.ReadFile(coveragePath)
++	if readErr != nil {
++		return nil, readErr
++	}
++
++	covStatements, loadErr := model.LoadCovStatementsFromCovProfile(covProfileBytes)
++	if loadErr != nil {
++		return nil, loadErr
++	}
++
++	filteredStatements, unionErr := m.filterStatementsByPRDiff(diffBlocks, covStatements)
++	if unionErr != nil {
++		return nil, unionErr
++	}
++	return m.filterStatementsByPatterns(filteredStatements)
++}
++
++func (m Manager) filterStatementsByPRDiff(diffBlocks []model.PRDiffBlock, covStatements []model.CovStatement) ([]model.CovStatement, error) {
++	filteredStatements := make([]model.CovStatement, 0)
++	for _, diffBlock := range diffBlocks {
++		if !m.isFileIncluded(diffBlock.FileName) {
++			log.Get().Debug("File excluded from diff", zap.String("fileName", diffBlock.FileName))
++			continue
++		}
++
++		for _, statement := range covStatements {
++			removedModuleFileName := strings.TrimPrefix(statement.FileName, m.arg.Module+"/")
++			if removedModuleFileName != diffBlock.FileName {
++				continue // Only consider statements from the same file as the diff block
++			}
++
++			// Check if statement's range overlaps with diffBlock's range
++			if statement.Block.Start <= diffBlock.Block.End && statement.Block.End >= diffBlock.Block.Start {
++				filteredStatements = append(filteredStatements, statement)
++			}
++		}
++	}
++
++	return filteredStatements, nil
++}
++
++func (m Manager) isFileIncluded(fileName string) bool {
++	// Skip _test.go files
++	if strings.HasSuffix(fileName, "_test.go") {
++		return false
++	}
++
++	// Skip non-Go files
++	if !strings.HasSuffix(fileName, ".go") {
++		return false
++	}
++
++	// Skip files in vendor directories
++	if strings.Contains(fileName, "vendor/") {
++		return true
++	}
++
++	// Check if the file is in the exclude list
++	for _, excludeDir := range m.conf.Files.Exclude.Dirs {
++		if strings.Contains(fileName, excludeDir) {
++			log.Get().Debug("File excluded from diff", zap.String("fileName", fileName), zap.String("excludeDir", excludeDir))
++			return false
++		}
++	}
++
++	// Check if the file is matching the include patterns
++	for _, excludePattern := range m.conf.Files.Exclude.Patterns {
++		fileBase := filepath.Base(fileName)
++		matched, err := filepath.Match(excludePattern, fileBase)
++		if err != nil {
++			log.Get().Error("Invalid exclude pattern", zap.String("pattern", excludePattern), zap.Error(err))
++			continue // Skip this pattern if it's invalid
++		}
++		if matched {
++			log.Get().Debug("File excluded from diff", zap.String("fileName", fileName))
++			return false
++		}
++	}
++
++	// Check if the file is in the included directories
++	var included = false
++	for _, includeDir := range m.conf.Files.Include.Dirs {
++		if strings.Contains(fileName, includeDir) {
++			included = true
++			break
++		}
++	}
++
++	if len(m.conf.Files.Include.Dirs) > 0 && !included {
++		log.Get().Debug("File not included in any include directory", zap.String("fileName", fileName))
++		return false
++	}
++
++	// Check if the file is matching the include patterns
++	included = false
++	for _, includePattern := range m.conf.Files.Include.Patterns {
++		fileBase := filepath.Base(fileName)
++		matched, err := filepath.Match(includePattern, fileBase)
++		if err != nil {
++			log.Get().Error("Invalid include pattern", zap.String("pattern", includePattern), zap.Error(err))
++			continue // Skip this pattern if it's invalid
++		}
++		if matched {
++			included = true
++			break
++		}
++	}
++
++	if len(m.conf.Files.Include.Patterns) > 0 && !included {
++		log.Get().Debug("File not included in any include pattern", zap.String("fileName", fileName))
++		return false
++	}
++
++	return true
++}
++
++func (m Manager) filterStatementsByPatterns(covStatements []model.CovStatement) ([]model.CovStatement, error) {
++	//Group statements by file name
++	groupedStatements := make(map[string][]model.CovStatement)
++	for _, statement := range covStatements {
++		fileName := strings.TrimPrefix(statement.FileName, m.arg.Module+"/")
++		if _, ok := groupedStatements[fileName]; !ok {
++			groupedStatements[fileName] = []model.CovStatement{statement}
++		}
++		groupedStatements[fileName] = append(groupedStatements[fileName], statement)
++	}
++
++	// Use a mutex to safely append to the filteredStatements slice across multiple goroutines
++	var (
++		mu                 sync.Mutex
++		filteredStatements []model.CovStatement
++		wg                 sync.WaitGroup
++		sem                = make(chan struct{}, ConcurrencyLimit) // concurrency limit
++	)
++
++	for fileName, statements := range groupedStatements {
++		wg.Add(1)
++		sem <- struct{}{} // acquire semaphore
++		go func(fileName string, statements []model.CovStatement) {
++			defer wg.Done()
++			defer func() { <-sem }() // release semaphore
++
++			includedStatements, err := m.filterStatementsForSpecifiedFile(statements, fileName)
++			if err != nil {
++				log.Get().Error("Failed to filter statements for file", zap.String("fileName", fileName), zap.Error(err))
++				return // Skip this file if it cannot be processed
++			}
++
++			mu.Lock()
++			filteredStatements = append(filteredStatements, includedStatements...)
++			mu.Unlock()
++		}(fileName, statements)
++	}
++
++	wg.Wait()
++	return filteredStatements, nil
++}
++
++func (m Manager) filterStatementsForSpecifiedFile(statements []model.CovStatement, fileName string) ([]model.CovStatement, error) {
++	codeLines, readErr := m.readCodeLinesByCovFileName(fileName)
++	if readErr != nil {
++		return make([]model.CovStatement, 0), readErr
++	}
++
++	if IsFileIgnoreCoverByAnnotation(codeLines) {
++		log.Get().Debug("File ignored by annotation",
++			zap.String("fileName", fileName))
++		return make([]model.CovStatement, 0), nil // Skip this file if it is ignored by annotation
++	}
++
++	includedStatements := make([]model.CovStatement, 0)
++	for _, statement := range statements {
++		// Check if the statement's block is within the code lines
++		if statement.Block.Start < 1 || statement.Block.End > len(codeLines) {
++			log.Get().Debug("Statement block out of range",
++				zap.String("fileName", fileName),
++				zap.Int("start", statement.Block.Start),
++				zap.Int("end", statement.Block.End))
++			continue // Skip this statement if its block is out of range
++		}
++
++		// Get the code lines for the statement's block
++		statementCodeLines := codeLines[statement.Block.Start-1 : statement.Block.End]
++		if IsStatementIgnoreCoverByPatterns(statementCodeLines, m.conf.Statements.Exclude.Patterns) {
++			continue
++		}
++		includedStatements = append(includedStatements, statement)
++	}
++	return includedStatements, nil
++}
++
++func (m Manager) readCodeLinesByCovFileName(fileName string) ([]string, error) {
++	trimmedFileName := strings.TrimPrefix(fileName, m.arg.Module+"/")
++	codeFilePath := fmt.Sprintf("%s/%s", m.arg.Path, trimmedFileName)
++
++	file, err := os.Open(codeFilePath)
++	if err != nil {
++		return nil, fmt.Errorf("failed to open file %s: %w", codeFilePath, err)
++	}
++	defer file.Close()
++
++	var codeLines []string
++	scanner := bufio.NewScanner(file)
++	for scanner.Scan() {
++		codeLines = append(codeLines, scanner.Text())
++	}
++	return codeLines, nil
++}
+diff --git a/cmd/threshold/diff/diff_test.go b/cmd/threshold/diff/diff_test.go
+new file mode 100644
+index 0000000..9873f17
+--- /dev/null
++++ b/cmd/threshold/diff/diff_test.go
+@@ -0,0 +1,269 @@
++package diff
++
++import (
++	"fmt"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
++	"github.com/stretchr/testify/require"
++	"os"
++	"testing"
++)
++
++func TestManager_union(t *testing.T) {
++	log.Init("debug")
++
++	diffBytes := loadTestData(t, "example-diff.diff")
++	covProfileBytes := loadTestData(t, "example-overage.out")
++	diffBlocks, diffErr := model.LoadPRDiffBlocksFromDiffFile(diffBytes)
++	require.NoError(t, diffErr)
++	require.NotEmpty(t, diffBlocks)
++	covStatements, covErr := model.LoadCovStatementsFromCovProfile(covProfileBytes)
++	require.NoError(t, covErr)
++	require.NotEmpty(t, covStatements)
++
++	t.Run("filterStatementsByPRDiff", func(t *testing.T) {
++		m := Manager{
++			arg:  model.Arg{Module: "mingyuans/gocov-threshold"},
++			conf: model.Conf{},
++		}
++
++		_, err := m.filterStatementsByPRDiff(diffBlocks, covStatements)
++		require.NoError(t, err)
++	})
++
++	t.Run("union2", func(t *testing.T) {
++		m := Manager{
++			arg:  model.Arg{Module: "mingyuans/gocov-threshold"},
++			conf: model.Conf{},
++		}
++
++		tempDiffBlocks := make([]model.PRDiffBlock, 0)
++		tempDiffBlocks = append(tempDiffBlocks, model.PRDiffBlock{
++			FileName: "example/main.go",
++			Block: model.Block{
++				Start: 10,
++				End:   15,
++			},
++		})
++
++		tempCovStatements := make([]model.CovStatement, 0)
++		tempCovStatements = append(tempCovStatements, model.CovStatement{
++			FileName: "mingyuans/gocov-threshold/example/main.go",
++			Block:    model.Block{Start: 10, End: 15},
++		})
++		tempCovStatements = append(tempCovStatements, model.CovStatement{
++			FileName: "mingyuans/gocov-threshold/example/cmd.go",
++			Block:    model.Block{Start: 11, End: 12},
++		})
++
++		statements, err := m.filterStatementsByPRDiff(tempDiffBlocks, tempCovStatements)
++		require.NoError(t, err)
++		require.Len(t, statements, 1, "Expected only one statement to match the diff block")
++		require.Equal(t, statements[0].FileName, "mingyuans/gocov-threshold/example/main.go")
++	})
++
++}
++
++func loadTestData(t *testing.T, fileName string) []byte {
++	t.Helper()
++	path := "../../../testdata/" + fileName
++	data, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("Failed to read test data from %s: %v", fileName, err)
++	}
++	return data
++}
++
++func TestManager_isFileIncluded(t *testing.T) {
++	log.Init("debug")
++
++	t.Run("nonGoFiles", func(t *testing.T) {
++		m := Manager{}
++		fileName := "testdata/example.txt"
++		isIncluded := m.isFileIncluded(fileName)
++		require.False(t, isIncluded, "Expected file to be excluded")
++	})
++
++	t.Run("includedDirs", func(t *testing.T) {
++		m := Manager{conf: model.Conf{}}
++		// Only include Go files under the "example" directory
++		m.conf.Files.Include.Dirs = []string{"example"}
++		fileName := "testdata/main.go"
++		isIncluded := m.isFileIncluded(fileName)
++		require.False(t, isIncluded, "Expected file to be excluded")
++	})
++
++	t.Run("excludeDirs", func(t *testing.T) {
++		m := Manager{conf: model.Conf{}}
++		// Only include Go files under the "example" directory
++		m.conf.Files.Exclude.Dirs = []string{"testdata"}
++		fileName := "testdata/main.go"
++		isIncluded := m.isFileIncluded(fileName)
++		require.False(t, isIncluded, "Expected file to be excluded")
++	})
++
++	t.Run("includedPatterns", func(t *testing.T) {
++		m := Manager{conf: model.Conf{}}
++		m.conf.Files.Include.Patterns = []string{"*_model.go"}
++		fileName := "testdata/main.go"
++		isIncluded := m.isFileIncluded(fileName)
++		require.False(t, isIncluded, "Expected file to be excluded")
++
++		fileName = "testdata/main_model.go"
++		isIncluded = m.isFileIncluded(fileName)
++		require.True(t, isIncluded, "Expected file to be included")
++	})
++
++	t.Run("excludePatterns", func(t *testing.T) {
++		m := Manager{conf: model.Conf{}}
++		// Only include Go files under the "example" directory
++		m.conf.Files.Exclude.Patterns = []string{"*_model.go"}
++		fileName := "testdata/main.go"
++		isIncluded := m.isFileIncluded(fileName)
++		require.True(t, isIncluded, "Expected file to be included")
++
++		fileName = "testdata/main_model.go"
++		isIncluded = m.isFileIncluded(fileName)
++		require.False(t, isIncluded, "Expected file to be excluded")
++
++	})
++}
++
++func TestManager_filterStatementsForSpecifiedFile(t *testing.T) {
++	log.Init("debug")
++
++	t.Run("ignore file", func(t *testing.T) {
++		pwd := os.Getenv("PWD")
++		m := Manager{
++			arg: model.Arg{
++				Module: "mingyuans/gocov-threshold",
++				Path:   fmt.Sprintf("%s/../../..", pwd),
++			},
++		}
++
++		statements := []model.CovStatement{}
++		statements = append(statements,
++			model.CovStatement{
++				FileName: "mingyuans/gocov-threshold/example/ignore.go",
++				Block: model.Block{
++					Start: 10,
++					End:   15,
++				},
++			})
++
++		filteredStatements, err := m.filterStatementsForSpecifiedFile(statements, "mingyuans/gocov-threshold/example/ignore.go")
++		require.NoError(t, err)
++		require.Empty(t, filteredStatements, "Expected no statements to be returned for ignored file")
++	})
++
++	t.Run("ignore statement by gocover:ignore", func(t *testing.T) {
++		pwd := os.Getenv("PWD")
++		m := Manager{
++			arg: model.Arg{
++				Module: "mingyuans/gocov-threshold",
++				Path:   fmt.Sprintf("%s/../../..", pwd),
++			},
++		}
++
++		statements := []model.CovStatement{}
++		statements = append(statements,
++			model.CovStatement{
++				FileName: "mingyuans/gocov-threshold/example/main.go",
++				Block: model.Block{
++					Start: 14,
++					End:   16,
++				},
++			},
++			model.CovStatement{
++				FileName: "mingyuans/gocov-threshold/example/main.go",
++				Block: model.Block{
++					Start: 22,
++					End:   25,
++				},
++			})
++
++		filteredStatements, err := m.filterStatementsForSpecifiedFile(statements, "mingyuans/gocov-threshold/example/main.go")
++		require.NoError(t, err)
++		require.Len(t, filteredStatements, 1, "Expected only one statement to match the diff block")
++		require.Equal(t, 14, filteredStatements[0].Block.Start, "Expected the start of the block to be 14")
++	})
++
++	t.Run("ignore statement by global custom regex", func(t *testing.T) {
++		pwd := os.Getenv("PWD")
++		m := Manager{
++			arg: model.Arg{
++				Module: "mingyuans/gocov-threshold",
++				Path:   fmt.Sprintf("%s/../../..", pwd),
++			},
++			conf: model.Conf{
++				Statements: model.StatementConf{
++					Exclude: model.StatementPattern{
++						Patterns: []string{".*mu.Lock.*"},
++					},
++				},
++			},
++		}
++
++		statements := []model.CovStatement{}
++		statements = append(statements,
++			model.CovStatement{
++				FileName: "mingyuans/gocov-threshold/example/main.go",
++				Block: model.Block{
++					Start: 14,
++					End:   16,
++				},
++			},
++			model.CovStatement{
++				FileName: "mingyuans/gocov-threshold/example/main.go",
++				Block: model.Block{
++					Start: 33,
++					End:   40,
++				},
++			})
++
++		filteredStatements, err := m.filterStatementsForSpecifiedFile(statements, "mingyuans/gocov-threshold/example/main.go")
++		require.NoError(t, err)
++		require.Len(t, filteredStatements, 1, "Expected only one statement to match the diff block")
++		require.Equal(t, 14, filteredStatements[0].Block.Start, "Expected the start of the block to be 14")
++	})
++}
++
++func TestManager_FilterStatements(t *testing.T) {
++	log.Init("debug")
++
++	t.Run("basic filter", func(t *testing.T) {
++		pwd := os.Getenv("PWD")
++		m := Manager{
++			arg: model.Arg{
++				Module: "mingyuans/gocov-threshold",
++				Path:   fmt.Sprintf("%s/../../..", pwd),
++			},
++			conf: model.Conf{},
++		}
++
++		diffBytes := loadTestData(t, "example-diff.diff")
++		coveragePath := fmt.Sprintf("%s/../../../testdata/example-overage.out", pwd)
++		statements, err := m.FilterStatements(diffBytes, coveragePath)
++		require.NoError(t, err)
++		require.NotEmpty(t, statements, "Expected filtered statements to be non-empty")
++	})
++
++	t.Run("empty diff", func(t *testing.T) {
++		pwd := os.Getenv("PWD")
++		m := Manager{
++			arg: model.Arg{
++				Module:   "mingyuans/gocov-threshold",
++				Path:     fmt.Sprintf("%s/../../..", pwd),
++				ConfPath: "../../../testdata/test-conf.yaml",
++			},
++			conf: model.Conf{},
++		}
++
++		diffBytes := []byte{}
++		coveragePath := "../../../testdata/example-overage.out"
++
++		statements, err := m.FilterStatements(diffBytes, coveragePath)
++		require.Error(t, err)
++		require.Empty(t, statements)
++	})
++}
+diff --git a/cmd/threshold/diff/ignore.go b/cmd/threshold/diff/ignore.go
+new file mode 100644
+index 0000000..9a0e8c8
+--- /dev/null
++++ b/cmd/threshold/diff/ignore.go
+@@ -0,0 +1,43 @@
++package diff
++
++import (
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
++	"go.uber.org/zap"
++	"regexp"
++)
++
++var IgnoreRegex = regexp.MustCompile(`.*//\s*(gocover:ignore)\s*$`)
++
++func IsFileIgnoreCoverByAnnotation(fileLines []string) bool {
++	if len(fileLines) == 0 {
++		return true
++	}
++	match := IgnoreRegex.FindString(fileLines[0])
++	return match != ""
++}
++
++func IsStatementIgnoreCoverByPatterns(lines []string, patterns []string) bool {
++	regexes := make([]*regexp.Regexp, 0)
++	for _, pattern := range patterns {
++		re, err := regexp.Compile(pattern)
++		if err != nil {
++			log.Get().Warn("Failed to compile regex pattern", zap.String("pattern", pattern), zap.Error(err))
++			continue // skip invalid patterns
++		}
++		regexes = append(regexes, re)
++	}
++
++	regexes = append(regexes, IgnoreRegex)
++	for _, line := range lines {
++		for _, re := range regexes {
++			if re.MatchString(line) {
++				log.Get().Debug("ignore cov by pattern",
++					zap.String("line", line),
++					zap.String("pattern", re.String()))
++				return true // Skip this statement if it matches any exclude pattern
++			}
++		}
++	}
++
++	return false
++}
+diff --git a/cmd/threshold/diff/ignore_test.go b/cmd/threshold/diff/ignore_test.go
+new file mode 100644
+index 0000000..def18bb
+--- /dev/null
++++ b/cmd/threshold/diff/ignore_test.go
+@@ -0,0 +1,61 @@
++package diff
++
++import (
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
++	"github.com/stretchr/testify/require"
++	"testing"
++)
++
++func TestIsFileIgnoreCover(t *testing.T) {
++	t.Run("ignore coverage", func(t *testing.T) {
++		fileLines := []string{
++			"// gocover:ignore",
++			"package main",
++			"",
++			"func CalculateSum(a, b int) int {",
++			"	return a + b",
++			"}",
++		}
++		ignore := IsFileIgnoreCoverByAnnotation(fileLines)
++		require.True(t, ignore, "Expected file to be ignored for coverage")
++	})
++
++	t.Run("wrong annotation", func(t *testing.T) {
++		fileLines := []string{
++			"// gocover:ignoretest",
++			"package main",
++			"",
++			"func CalculateSum(a, b int) int {",
++			"	return a + b",
++			"}",
++		}
++		ignore := IsFileIgnoreCoverByAnnotation(fileLines)
++		require.False(t, ignore, "Expected file not to be ignored for coverage")
++	})
++}
++
++func TestIsStatementIgnoreCover(t *testing.T) {
++	log.Init("debug")
++
++	t.Run("ignore coverage", func(t *testing.T) {
++		fileLines := []string{
++			"func CalculateSum(a, b int) int {",
++			"	// gocover:ignore",
++			"	return a + b",
++			"}",
++		}
++		ignore := IsStatementIgnoreCoverByPatterns(fileLines, nil)
++		require.True(t, ignore, "Expected file to be ignored for coverage")
++	})
++
++	t.Run("wrong annotation", func(t *testing.T) {
++		fileLines := []string{
++			"func CalculateSum(a, b int) int {",
++			"	// gocover:ignoressssss",
++			"	return a + b",
++			"}",
++		}
++		ignore := IsStatementIgnoreCoverByPatterns(fileLines, nil)
++		require.False(t, ignore, "Expected file not to be ignored for coverage")
++	})
++}
+diff --git a/cmd/threshold/log/log.go b/cmd/threshold/log/log.go
+new file mode 100644
+index 0000000..4545fec
+--- /dev/null
++++ b/cmd/threshold/log/log.go
+@@ -0,0 +1,25 @@
++package log
++
++import (
++	"go.uber.org/zap"
++	"sync"
++)
++
++var (
++	gLogger *zap.Logger
++	once    sync.Once
++)
++
++func Init(level string) {
++	cfg := zap.NewProductionConfig()
++	zapLevel, parseErr := zap.ParseAtomicLevel(level)
++	if parseErr != nil {
++		panic("Failed to parse log level: " + parseErr.Error())
++	}
++	cfg.Level = zapLevel
++	gLogger, _ = cfg.Build()
++}
++
++func Get() *zap.Logger {
++	return gLogger
++}
+diff --git a/cmd/threshold/main.go b/cmd/threshold/main.go
+new file mode 100644
+index 0000000..53bddd8
+--- /dev/null
++++ b/cmd/threshold/main.go
+@@ -0,0 +1,32 @@
++package main
++
++import (
++	"fmt"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/diff"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/pr"
++	"go.uber.org/zap"
++)
++
++const DiffFilePath = "pr.diff"
++
++func main() {
++	actionArg := model.ParseArg()
++	log.Init(actionArg.LoggerLevel)
++	log.Get().Debug("Arguments parsed", zap.Any("arg", actionArg))
++
++	diffManager := diff.NewManager(actionArg)
++
++	prService := pr.NewService(actionArg)
++	log.Get().Debug("PR Service initialized", zap.Any("env", prService.GetEnvironment()),
++		zap.Any("pr", prService.GetPRInfo()))
++
++	diffBytes, downloadErr := prService.DownloadDiff()
++	if downloadErr != nil {
++		panic(fmt.Sprintf("Failed to download and save PR diff: %s", downloadErr.Error()))
++	}
++
++	diffManager.FilterStatements(diffBytes, actionArg.CoveragePath)
++
++}
+diff --git a/cmd/threshold/model/arg.go b/cmd/threshold/model/arg.go
+new file mode 100644
+index 0000000..471fcd9
+--- /dev/null
++++ b/cmd/threshold/model/arg.go
+@@ -0,0 +1,41 @@
++package model
++
++import (
++	"fmt"
++	"os"
++	"strings"
++)
++
++type Arg struct {
++	IgnoreMain   bool
++	Module       string
++	Threshold    int
++	Path         string
++	Coverprofile string
++	LoggerLevel  string
++	GithubToken  string
++	ConfPath     string
++}
++
++// ParseArg parses command-line flags into an Arg struct.
++func ParseArg() Arg {
++	var a Arg
++	a.IgnoreMain = getActionInput("ignore-main") == "true"
++	a.Module = getActionInput("module")
++	a.Threshold = 80
++	if threshold := getActionInput("threshold"); threshold != "" {
++		_, _ = fmt.Sscanf(threshold, "%d", &a.Threshold)
++	}
++	a.Path = getActionInput("path")
++	a.Coverprofile = getActionInput("coverprofile")
++	a.LoggerLevel = getActionInput("logger-level")
++	a.GithubToken = getActionInput("token")
++	a.ConfPath = getActionInput("conf")
++	return a
++}
++
++func getActionInput(input string) string {
++	return os.Getenv(
++		fmt.Sprintf("INPUT_%s", strings.ToUpper(input)),
++	)
++}
+diff --git a/cmd/threshold/model/block.go b/cmd/threshold/model/block.go
+new file mode 100644
+index 0000000..748048e
+--- /dev/null
++++ b/cmd/threshold/model/block.go
+@@ -0,0 +1,140 @@
++package model
++
++import (
++	"bufio"
++	"bytes"
++	"fmt"
++	"strconv"
++	"strings"
++)
++
++type Block struct {
++	Start int `json:"start"`
++	End   int `json:"end"`
++}
++
++type CovStatement struct {
++	FileName       string `json:"file_name"`
++	Block          Block  `json:"block"`
++	StatementCount int    `json:"statement_count"`
++	ExecutionCount int    `json:"execution_count"`
++}
++
++type PRDiffBlock struct {
++	FileName string `json:"file_name"`
++	Block    Block  `json:"block"`
++}
++
++func LoadCovStatementsFromCovProfile(covFileBytes []byte) ([]CovStatement, error) {
++	var covStatements []CovStatement
++	scanner := bufio.NewScanner(bytes.NewReader(covFileBytes))
++	for scanner.Scan() {
++		line := scanner.Text()
++		if strings.HasPrefix(line, "mode:") {
++			continue // skip header
++		}
++		// Example line: path/to/file.go:10.12,12.3 2 1
++		parts := strings.Fields(line)
++		if len(parts) != 3 {
++			continue
++		}
++		fileAndBlock := parts[0]
++		statementCountStr := parts[1]
++		executionCountStr := parts[2]
++
++		fileBlockParts := strings.Split(fileAndBlock, ":")
++		if len(fileBlockParts) != 2 {
++			continue
++		}
++		fileName := fileBlockParts[0]
++		blockRange := fileBlockParts[1]
++
++		blockParts := strings.Split(blockRange, ",")
++		if len(blockParts) != 2 {
++			continue
++		}
++		startStr := blockParts[0]
++		endStr := blockParts[1]
++
++		startLineCol := strings.Split(startStr, ".")
++		endLineCol := strings.Split(endStr, ".")
++		if len(startLineCol) != 2 || len(endLineCol) != 2 {
++			continue
++		}
++		startLine, err1 := strconv.Atoi(startLineCol[0])
++		endLine, err2 := strconv.Atoi(endLineCol[0])
++		if err1 != nil || err2 != nil {
++			continue
++		}
++
++		statementCount, err3 := strconv.Atoi(statementCountStr)
++		executionCount, err4 := strconv.Atoi(executionCountStr)
++		if err3 != nil || err4 != nil {
++			continue
++		}
++
++		covStatements = append(covStatements, CovStatement{
++			FileName: fileName,
++			Block: Block{
++				Start: startLine,
++				End:   endLine,
++			},
++			StatementCount: statementCount,
++			ExecutionCount: executionCount,
++		})
++	}
++	if err := scanner.Err(); err != nil {
++		return nil, fmt.Errorf("failed to scan coverage profile: %w", err)
++	}
++	return covStatements, nil
++}
++
++func LoadPRDiffBlocksFromDiffFile(diffFileBytes []byte) ([]PRDiffBlock, error) {
++	var diffBlocks []PRDiffBlock
++	scanner := bufio.NewScanner(bytes.NewReader(diffFileBytes))
++	var currentFile string
++	for scanner.Scan() {
++		line := scanner.Text()
++		if strings.HasPrefix(line, "diff --git") {
++			// New file section starts
++			parts := strings.Split(line, " ")
++			if len(parts) >= 3 {
++				currentFile = strings.TrimPrefix(parts[2], "a/")
++			}
++			continue
++		}
++		if strings.HasPrefix(line, "@@") {
++			// Block of code starts
++			blockPartsInNewFile := strings.Split(line, " ")
++			if len(blockPartsInNewFile) < 2 {
++				continue
++			}
++			blockRangeInNewFile := blockPartsInNewFile[2]
++			blockPartsInNewFile = strings.Split(blockRangeInNewFile, ",")
++			if len(blockPartsInNewFile) < 2 {
++				continue
++			}
++			startLineStr := strings.TrimPrefix(blockPartsInNewFile[0], "+")
++			startLine, err := strconv.Atoi(startLineStr)
++			if err != nil {
++				continue
++			}
++			endLineStr := blockPartsInNewFile[1]
++			endLine, err := strconv.Atoi(endLineStr)
++			if err != nil {
++				continue
++			}
++			diffBlocks = append(diffBlocks, PRDiffBlock{
++				FileName: currentFile,
++				Block: Block{
++					Start: startLine,
++					End:   startLine + endLine - 1,
++				},
++			})
++		}
++	}
++	if err := scanner.Err(); err != nil {
++		return nil, fmt.Errorf("failed to scan diff file: %w", err)
++	}
++	return diffBlocks, nil
++}
+diff --git a/cmd/threshold/model/block_test.go b/cmd/threshold/model/block_test.go
+new file mode 100644
+index 0000000..416e05b
+--- /dev/null
++++ b/cmd/threshold/model/block_test.go
+@@ -0,0 +1,40 @@
++package model
++
++import (
++	"fmt"
++	"github.com/stretchr/testify/require"
++	"os"
++	"testing"
++)
++
++func TestLoadCovStatementsFromCovProfile(t *testing.T) {
++	pwdDir, wdErr := os.Getwd()
++	require.NoError(t, wdErr)
++	covProfile := fmt.Sprintf("%s/../../../testdata/example-overage.out", pwdDir)
++
++	t.Run("LoadCovStatementsFromCovProfile", func(t *testing.T) {
++		covProfileBytes, readErr := os.ReadFile(covProfile)
++		require.NoError(t, readErr)
++		require.NotEmpty(t, covProfileBytes)
++		statements, loadErr := LoadCovStatementsFromCovProfile(covProfileBytes)
++		require.NoError(t, loadErr)
++		require.NotEmpty(t, statements)
++		require.NotEmpty(t, statements[0].FileName)
++	})
++}
++
++func TestLoadPRDiffBlocksFromDiffFile(t *testing.T) {
++	pwdDir, wdErr := os.Getwd()
++	require.NoError(t, wdErr)
++	diffFile := fmt.Sprintf("%s/../../../testdata/example-diff.diff", pwdDir)
++
++	t.Run("LoadPRDiffBlocksFromDiffFile", func(t *testing.T) {
++		diffBytes, readErr := os.ReadFile(diffFile)
++		require.NoError(t, readErr)
++		require.NotEmpty(t, diffBytes)
++		blocks, loadErr := LoadPRDiffBlocksFromDiffFile(diffBytes)
++		require.NoError(t, loadErr)
++		require.NotEmpty(t, blocks)
++		require.NotEmpty(t, blocks[0].FileName)
++	})
++}
+diff --git a/cmd/threshold/model/conf.go b/cmd/threshold/model/conf.go
+new file mode 100644
+index 0000000..1e63615
+--- /dev/null
++++ b/cmd/threshold/model/conf.go
+@@ -0,0 +1,43 @@
++package model
++
++import (
++	"gopkg.in/yaml.v3"
++	"os"
++)
++
++type Conf struct {
++	Files      FileConf      `yaml:"files"`
++	Statements StatementConf `yaml:"statements"`
++}
++
++type FileConf struct {
++	Include FilePattern `yaml:"include"`
++	Exclude FilePattern `yaml:"exclude"`
++}
++
++type FilePattern struct {
++	Dirs     []string `yaml:"dirs"`
++	Patterns []string `yaml:"patterns"`
++}
++
++type StatementConf struct {
++	Exclude StatementPattern `yaml:"exclude"`
++}
++
++type StatementPattern struct {
++	Patterns   []string `yaml:"patterns"`
++	Annotation string   `yaml:"annotation"`
++}
++
++func LoadConfFromYAML(path string) (Conf, error) {
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return Conf{}, err
++	}
++
++	var conf Conf
++	if unmarshalErr := yaml.Unmarshal(data, &conf); unmarshalErr != nil {
++		return Conf{}, unmarshalErr
++	}
++	return conf, nil
++}
+diff --git a/cmd/threshold/pr/download.go b/cmd/threshold/pr/download.go
+new file mode 100644
+index 0000000..5ff5584
+--- /dev/null
++++ b/cmd/threshold/pr/download.go
+@@ -0,0 +1,72 @@
++package pr
++
++import (
++	"fmt"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
++	"go.uber.org/zap"
++	"io"
++	"net/http"
++	"os"
++	"time"
++)
++
++func (srv Service) DownloadDiff() ([]byte, error) {
++	diffURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d",
++		srv.env.APIServerURL,
++		srv.env.RepositoryOwner,
++		srv.env.RepositoryName,
++		srv.info.Number)
++
++	log.Get().Debug("Downloading diff from URL", zap.String("diffURL", diffURL))
++
++	// Create request
++	req, err := http.NewRequest("GET", diffURL, nil)
++	if err != nil {
++		return []byte{}, fmt.Errorf("failed to create request: %w", err)
++	}
++
++	// Set authentication headers
++	req.Header.Set("Authorization", "Bearer "+srv.inputArg.GithubToken)
++	req.Header.Set("Accept", "application/vnd.github.diff")
++	req.Header.Set("User-Agent", "GitHub-Action-PR-Diff-Downloader")
++
++	// Send request
++	client := &http.Client{Timeout: 60 * time.Second}
++	resp, err := client.Do(req)
++	if err != nil {
++		return []byte{}, fmt.Errorf("failed to download diff: %w", err)
++	}
++	defer resp.Body.Close()
++
++	if resp.StatusCode != http.StatusOK {
++		return []byte{}, fmt.Errorf("diff download failed with status %d", resp.StatusCode)
++	}
++
++	// Read response content
++	content, err := io.ReadAll(resp.Body)
++	if err != nil {
++		return []byte{}, fmt.Errorf("failed to read diff content: %w", err)
++	}
++
++	log.Get().Debug("Downloading diff from URL", zap.String("diffContent", string(content)))
++
++	return content, nil
++}
++
++func saveDiffToFile(content []byte, filename string) error {
++	return os.WriteFile(filename, content, 0644)
++}
++
++func (srv Service) DownloadAndSaveDiff(filename string) error {
++	diffContent, err := srv.DownloadDiff()
++	if err != nil {
++		return fmt.Errorf("failed to download diff: %w", err)
++	}
++
++	if err := saveDiffToFile(diffContent, filename); err != nil {
++		return fmt.Errorf("failed to save diff to file: %w", err)
++	}
++
++	log.Get().Info("Diff downloaded and saved successfully", zap.String("filename", filename))
++	return nil
++}
+diff --git a/cmd/threshold/pr/env.go b/cmd/threshold/pr/env.go
+new file mode 100644
+index 0000000..f307733
+--- /dev/null
++++ b/cmd/threshold/pr/env.go
+@@ -0,0 +1,176 @@
++package pr
++
++import (
++	"encoding/json"
++	"fmt"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
++	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
++	"net/http"
++	"os"
++	"strconv"
++	"strings"
++	"time"
++)
++
++func getPREnvironment() Environment {
++	repository := os.Getenv("GITHUB_REPOSITORY")
++
++	var repositoryName = ""
++	parts := strings.Split(repository, "/")
++	if len(parts) == 2 {
++		repositoryName = parts[1]
++	}
++
++	if len(repositoryName) == 0 {
++		log.Get().Fatal("GITHUB_REPOSITORY environment variable is not set or invalid. Expected format: 'owner/repo'")
++	}
++
++	return Environment{
++		Repository:      repository,
++		RepositoryName:  repositoryName,
++		EventName:       os.Getenv("GITHUB_EVENT_NAME"),
++		EventPath:       os.Getenv("GITHUB_EVENT_PATH"),
++		RefName:         os.Getenv("GITHUB_REF_NAME"),
++		RepositoryOwner: os.Getenv("GITHUB_REPOSITORY_OWNER"),
++		SHA:             os.Getenv("GITHUB_SHA"),
++		Actor:           os.Getenv("GITHUB_ACTOR"),
++		ServerURL:       getEnvWithDefault("GITHUB_SERVER_URL", "https://github.com"),
++		APIServerURL:    getEnvWithDefault("GITHUB_API_URL", "https://api.github.com"),
++	}
++}
++
++func getEnvWithDefault(key, defaultValue string) string {
++	if value := os.Getenv(key); value != "" {
++		return value
++	}
++	return defaultValue
++}
++
++func (srv Service) GetEnvironment() Environment {
++	return srv.env
++}
++
++type Environment struct {
++	Repository      string // GITHUB_REPOSITORY
++	RepositoryName  string
++	EventName       string // GITHUB_EVENT_NAME
++	EventPath       string // GITHUB_EVENT_PATH
++	RepositoryOwner string // GITHUB_REPOSITORY_OWNER
++	RefName         string // GITHUB_REF_NAME
++	SHA             string // GITHUB_SHA
++	Actor           string // GITHUB_ACTOR
++	ServerURL       string // GITHUB_SERVER_URL
++	APIServerURL    string // GITHUB_API_URL
++}
++
++type GitHubPRInfo struct {
++	Number   int    `json:"number"`
++	Title    string `json:"title"`
++	HtmlURL  string `json:"html_url"`
++	DiffURL  string `json:"diff_url"`
++	PatchURL string `json:"patch_url"`
++	Head     struct {
++		SHA string `json:"sha"`
++		Ref string `json:"ref"`
++	} `json:"head"`
++	Base struct {
++		SHA string `json:"sha"`
++		Ref string `json:"ref"`
++	} `json:"base"`
++	State string `json:"state"`
++}
++
++type PullRequestEvent struct {
++	Number      int          `json:"number"`
++	PullRequest GitHubPRInfo `json:"pull_request"`
++	Repository  struct {
++		Name     string `json:"name"`
++		FullName string `json:"full_name"`
++		Owner    struct {
++			Login string `json:"login"`
++		} `json:"owner"`
++	} `json:"repository"`
++	Action string `json:"action"`
++}
++
++func gettPRInfo(env Environment, arg model.Arg) (GitHubPRInfo, error) {
++	if env.EventPath != "" {
++		if prInfo, err := getPRInfoFromEventFile(env.EventPath); err == nil {
++			return prInfo, nil
++		}
++		log.Get().Debug("⚠️  Failed to read from event file, trying API...")
++	}
++
++	return getPRInfoFromAPI(env, arg)
++}
++
++func (srv Service) GetPRInfo() GitHubPRInfo {
++	return srv.info
++}
++
++func getPRInfoFromEventFile(eventPath string) (GitHubPRInfo, error) {
++	prInfo := GitHubPRInfo{}
++	data, err := os.ReadFile(eventPath)
++	if err != nil {
++		return prInfo, fmt.Errorf("failed to read event file: %w", err)
++	}
++
++	var event PullRequestEvent
++	if err := json.Unmarshal(data, &event); err != nil {
++		return prInfo, fmt.Errorf("failed to parse event JSON: %w", err)
++	}
++
++	return event.PullRequest, nil
++}
++
++func getPRInfoFromAPI(env Environment, arg model.Arg) (GitHubPRInfo, error) {
++	prInfo := GitHubPRInfo{}
++	//The for: refs/pull/{pr_number}/merge
++	prNumber, err := extractPRNumber(env.RefName, env.SHA)
++	if err != nil {
++		return prInfo, fmt.Errorf("failed to extract PR number: %w", err)
++	}
++
++	apiURL := fmt.Sprintf("%s/repos/%s/pulls/%d", env.APIServerURL, env.Repository, prNumber)
++
++	req, err := http.NewRequest("GET", apiURL, nil)
++	if err != nil {
++		return prInfo, fmt.Errorf("failed to create request: %w", err)
++	}
++
++	req.Header.Set("Authorization", "token "+arg.GithubToken)
++	req.Header.Set("Accept", "application/vnd.github.v3+json")
++	req.Header.Set("User-Agent", "mingyuans/gocov-threshold")
++
++	client := &http.Client{Timeout: 30 * time.Second}
++	resp, err := client.Do(req)
++	if err != nil {
++		return prInfo, fmt.Errorf("failed to send request: %w", err)
++	}
++	defer resp.Body.Close()
++
++	if resp.StatusCode != http.StatusOK {
++		return prInfo, fmt.Errorf("API request failed with status %d", resp.StatusCode)
++	}
++
++	if decodeErr := json.NewDecoder(resp.Body).Decode(&prInfo); decodeErr != nil {
++		return prInfo, fmt.Errorf("failed to decode response: %w", decodeErr)
++	}
++
++	return prInfo, nil
++}
++
++func extractPRNumber(refName, sha string) (int, error) {
++	if strings.HasPrefix(refName, "refs/pull/") {
++		parts := strings.Split(refName, "/")
++		if len(parts) >= 3 {
++			return strconv.Atoi(parts[2])
++		}
++	}
++
++	if prNum, err := strconv.Atoi(refName); err == nil {
++		return prNum, nil
++	}
++
++	return 0, fmt.Errorf("unable to extract PR number from ref: %s", refName)
++}
+diff --git a/cmd/threshold/pr/pr.go b/cmd/threshold/pr/pr.go
+new file mode 100644
+index 0000000..4337f76
+--- /dev/null
++++ b/cmd/threshold/pr/pr.go
+@@ -0,0 +1,22 @@
++package pr
++
++import "github.com/mingyuans/gocov-threshold/cmd/threshold/model"
++
++type Service struct {
++	env      Environment
++	info     GitHubPRInfo
++	inputArg model.Arg
++}
++
++func NewService(inputArg model.Arg) *Service {
++	env := getPREnvironment()
++	info, getInfoErr := gettPRInfo(env, inputArg)
++	if getInfoErr != nil {
++		panic("Failed to get PR info: " + getInfoErr.Error())
++	}
++	return &Service{
++		env:      env,
++		info:     info,
++		inputArg: inputArg,
++	}
++}
+diff --git a/example/ignore.go b/example/ignore.go
+new file mode 100644
+index 0000000..775f013
+--- /dev/null
++++ b/example/ignore.go
+@@ -0,0 +1,6 @@
++// gocover:ignore
++package main
++
++func CalculateSum(a, b int) int {
++	return a + b
++}
+diff --git a/example/main.go b/example/main.go
+new file mode 100644
+index 0000000..87d6bf1
+--- /dev/null
++++ b/example/main.go
+@@ -0,0 +1,40 @@
++package main
++
++import (
++	"fmt"
++	"math/rand"
++	"sync"
++)
++
++func main() {
++	value := rand.Intn(100)
++	exampleFunc(value)
++	exampleFunc2(value)
++	exampleFunc3(value)
++}
++
++func exampleFunc(value int) {
++	if value%2 == 0 {
++		println("Even")
++	} else {
++		println("Odd")
++	}
++}
++
++func exampleFunc2(value int) {
++	if value%3 == 0 {
++		println("Divisible by 3")
++	} else {
++		// gocover:ignore
++		println("Not divisible by 3")
++	}
++}
++
++func exampleFunc3(value int) {
++	// init a mutex and lock
++	var mu = sync.Mutex{}
++	mu.Lock()
++	fmt.Println("Mutex locked")
++	defer mu.Unlock()
++	fmt.Println("Mutex unlocked")
++}
+diff --git a/example/main_test.go b/example/main_test.go
+new file mode 100644
+index 0000000..f29423e
+--- /dev/null
++++ b/example/main_test.go
+@@ -0,0 +1,15 @@
++package main
++
++import "testing"
++
++func Test_exampleFunc(t *testing.T) {
++	t.Run("exampleFunc", func(t *testing.T) {
++		exampleFunc(1)
++	})
++}
++
++func Test_exampleFunc2(t *testing.T) {
++	t.Run("exampleFunc2", func(t *testing.T) {
++		exampleFunc2(3)
++	})
++}
+diff --git a/go.mod b/go.mod
+new file mode 100644
+index 0000000..9d6ae1c
+--- /dev/null
++++ b/go.mod
+@@ -0,0 +1,15 @@
++module github.com/mingyuans/gocov-threshold
++
++go 1.24.2
++
++require (
++	github.com/stretchr/testify v1.10.0
++	go.uber.org/zap v1.27.0
++	gopkg.in/yaml.v3 v3.0.1
++)
++
++require (
++	github.com/davecgh/go-spew v1.1.1 // indirect
++	github.com/pmezard/go-difflib v1.0.0 // indirect
++	go.uber.org/multierr v1.11.0 // indirect
++)
+diff --git a/testdata/example-diff.diff b/testdata/example-diff.diff
+new file mode 100644
+index 0000000..44a4e56
+--- /dev/null
++++ b/testdata/example-diff.diff
+@@ -0,0 +1,545 @@
++diff --git a/.github/workflows/integration.yaml b/.github/workflows/integration.yaml
++new file mode 100644
++index 0000000..7015c2d
++--- /dev/null
+++++ b/.github/workflows/integration.yaml
++@@ -0,0 +1,26 @@
+++name: Integration Test
+++
+++on:
+++  pull_request:
+++
+++jobs:
+++  build:
+++    runs-on: ubuntu-latest
+++    steps:
+++      - uses: actions/checkout@v3
+++        with:
+++          fetch-depth: 0
+++
+++      - name: Go Test
+++        run: |
+++          go test ./example/... -coverprofile=coverage.out
+++
+++      - name: Coverage Threshold
+++        id: coverage_threshold
+++        uses: mingyuans/gocov-threshold@dev
+++        with:
+++          path: .
+++          coverprofile: coverage.out
+++          module: github.com/mingyuans/gocov-threshold
+++          logger-level: debug
+++          token: ${{ secrets.GITHUB_TOKEN }}
++\ No newline at end of file
++diff --git a/Dockerfile b/Dockerfile
++new file mode 100644
++index 0000000..846b874
++--- /dev/null
+++++ b/Dockerfile
++@@ -0,0 +1,12 @@
+++FROM golang:1.24-alpine3.21
+++
+++WORKDIR /gocov-threshold
+++COPY . /gocov-threshold
+++
+++
+++RUN go mod download
+++RUN go mod tidy
+++
+++RUN cd cmd/threshold && go install
+++
+++CMD ["threshold"]
++\ No newline at end of file
++diff --git a/action.yaml b/action.yaml
++new file mode 100644
++index 0000000..2230504
++--- /dev/null
+++++ b/action.yaml
++@@ -0,0 +1,29 @@
+++name: "Go Coverage Threshold Action"
+++description: "Show coverage difference between branches in a pull request"
+++author: "Jimmy Yan"
+++inputs:
+++  path:
+++    description: "path to git repo"
+++    default: "."
+++  coverprofile:
+++    description: "path to coverage profile"
+++  module:
+++    description: "the Go module name"
+++  ignore-main:
+++    default: "true"
+++    description: "ignore main package"
+++  threshold:
+++    description: "coverage threshold (0-100)"
+++    default: "80"
+++  logger-level:
+++    description: "logger level (debug, info, warn, error)"
+++    default: "info"
+++  token:
+++    description: "GitHub token for API access"
+++    default: ${{ github.token }}
+++outputs:
+++  covdiff:
+++    description: "the coverage difference (0-100)"
+++runs:
+++  using: "docker"
+++  image: "Dockerfile"
++diff --git a/cmd/threshold/arg/arg.go b/cmd/threshold/arg/arg.go
++new file mode 100644
++index 0000000..164a338
++--- /dev/null
+++++ b/cmd/threshold/arg/arg.go
++@@ -0,0 +1,39 @@
+++package arg
+++
+++import (
+++	"fmt"
+++	"os"
+++	"strings"
+++)
+++
+++type Arg struct {
+++	IgnoreMain   bool
+++	Module       string
+++	Threshold    int
+++	Path         string
+++	Coverprofile string
+++	LoggerLevel  string
+++	GithubToken  string
+++}
+++
+++// ParseArg parses command-line flags into an Arg struct.
+++func ParseArg() Arg {
+++	var a Arg
+++	a.IgnoreMain = getActionInput("ignore-main") == "true"
+++	a.Module = getActionInput("module")
+++	a.Threshold = 80
+++	if threshold := getActionInput("threshold"); threshold != "" {
+++		_, _ = fmt.Sscanf(threshold, "%d", &a.Threshold)
+++	}
+++	a.Path = getActionInput("path")
+++	a.Coverprofile = getActionInput("coverprofile")
+++	a.LoggerLevel = getActionInput("logger-level")
+++	a.GithubToken = getActionInput("token")
+++	return a
+++}
+++
+++func getActionInput(input string) string {
+++	return os.Getenv(
+++		fmt.Sprintf("INPUT_%s", strings.ToUpper(input)),
+++	)
+++}
++diff --git a/cmd/threshold/log/log.go b/cmd/threshold/log/log.go
++new file mode 100644
++index 0000000..4545fec
++--- /dev/null
+++++ b/cmd/threshold/log/log.go
++@@ -0,0 +1,25 @@
+++package log
+++
+++import (
+++	"go.uber.org/zap"
+++	"sync"
+++)
+++
+++var (
+++	gLogger *zap.Logger
+++	once    sync.Once
+++)
+++
+++func Init(level string) {
+++	cfg := zap.NewProductionConfig()
+++	zapLevel, parseErr := zap.ParseAtomicLevel(level)
+++	if parseErr != nil {
+++		panic("Failed to parse log level: " + parseErr.Error())
+++	}
+++	cfg.Level = zapLevel
+++	gLogger, _ = cfg.Build()
+++}
+++
+++func Get() *zap.Logger {
+++	return gLogger
+++}
++diff --git a/cmd/threshold/main.go b/cmd/threshold/main.go
++new file mode 100644
++index 0000000..5aac33d
++--- /dev/null
+++++ b/cmd/threshold/main.go
++@@ -0,0 +1,25 @@
+++package main
+++
+++import (
+++	"fmt"
+++	"github.com/mingyuans/gocov-threshold/cmd/threshold/arg"
+++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
+++	"github.com/mingyuans/gocov-threshold/cmd/threshold/pr"
+++	"go.uber.org/zap"
+++)
+++
+++func main() {
+++	actionArg := arg.ParseArg()
+++	log.Init(actionArg.LoggerLevel)
+++	log.Get().Debug("Arguments parsed", zap.Any("arg", actionArg))
+++	fmt.Printf("Parsed arguments: %+v\n", actionArg)
+++
+++	prService := pr.NewService(actionArg)
+++	log.Get().Debug("PR Service initialized", zap.Any("env", prService.GetEnvironment()),
+++		zap.Any("pr", prService.GetPRInfo()))
+++
+++	downloadErr := prService.DownloadAndSaveDiff("pr.diff")
+++	if downloadErr != nil {
+++		panic(fmt.Sprintf("Failed to download and save PR diff: %s", downloadErr.Error()))
+++	}
+++}
++diff --git a/cmd/threshold/pr/download.go b/cmd/threshold/pr/download.go
++new file mode 100644
++index 0000000..3e58268
++--- /dev/null
+++++ b/cmd/threshold/pr/download.go
++@@ -0,0 +1,72 @@
+++package pr
+++
+++import (
+++	"fmt"
+++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
+++	"go.uber.org/zap"
+++	"io"
+++	"net/http"
+++	"os"
+++	"time"
+++)
+++
+++func (srv Service) DownloadDiff() (string, error) {
+++	diffURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d",
+++		srv.env.APIServerURL,
+++		srv.env.RepositoryOwner,
+++		srv.env.RepositoryName,
+++		srv.info.Number)
+++
+++	log.Get().Debug("Downloading diff from URL", zap.String("diffURL", diffURL))
+++
+++	// Create request
+++	req, err := http.NewRequest("GET", diffURL, nil)
+++	if err != nil {
+++		return "", fmt.Errorf("failed to create request: %w", err)
+++	}
+++
+++	// Set authentication headers
+++	req.Header.Set("Authorization", "Bearer "+srv.inputArg.GithubToken)
+++	req.Header.Set("Accept", "application/vnd.github.diff")
+++	req.Header.Set("User-Agent", "GitHub-Action-PR-Diff-Downloader")
+++
+++	// Send request
+++	client := &http.Client{Timeout: 60 * time.Second}
+++	resp, err := client.Do(req)
+++	if err != nil {
+++		return "", fmt.Errorf("failed to download diff: %w", err)
+++	}
+++	defer resp.Body.Close()
+++
+++	if resp.StatusCode != http.StatusOK {
+++		return "", fmt.Errorf("diff download failed with status %d", resp.StatusCode)
+++	}
+++
+++	// Read response content
+++	content, err := io.ReadAll(resp.Body)
+++	if err != nil {
+++		return "", fmt.Errorf("failed to read diff content: %w", err)
+++	}
+++
+++	return string(content), nil
+++}
+++
+++func saveDiffToFile(content, filename string) error {
+++	return os.WriteFile(filename, []byte(content), 0644)
+++}
+++
+++func (srv Service) DownloadAndSaveDiff(filename string) error {
+++	diffContent, err := srv.DownloadDiff()
+++	if err != nil {
+++		return fmt.Errorf("failed to download diff: %w", err)
+++	}
+++
+++	log.Get().Debug("Downloading diff from URL", zap.String("diffContent", diffContent))
+++
+++	if err := saveDiffToFile(diffContent, filename); err != nil {
+++		return fmt.Errorf("failed to save diff to file: %w", err)
+++	}
+++
+++	log.Get().Info("Diff downloaded and saved successfully", zap.String("filename", filename))
+++	return nil
+++}
++diff --git a/cmd/threshold/pr/env.go b/cmd/threshold/pr/env.go
++new file mode 100644
++index 0000000..7070e29
++--- /dev/null
+++++ b/cmd/threshold/pr/env.go
++@@ -0,0 +1,173 @@
+++package pr
+++
+++import (
+++	"encoding/json"
+++	"fmt"
+++	"github.com/mingyuans/gocov-threshold/cmd/threshold/arg"
+++	"github.com/mingyuans/gocov-threshold/cmd/threshold/log"
+++	"net/http"
+++	"os"
+++	"strconv"
+++	"strings"
+++	"time"
+++)
+++
+++func getPREnvironment() Environment {
+++	repository := os.Getenv("GITHUB_REPOSITORY")
+++
+++	var repositoryName = ""
+++	parts := strings.Split(repository, "/")
+++	if len(parts) == 2 {
+++		repositoryName = parts[1]
+++	}
+++
+++	return Environment{
+++		Repository:      repository,
+++		RepositoryName:  repositoryName,
+++		EventName:       os.Getenv("GITHUB_EVENT_NAME"),
+++		EventPath:       os.Getenv("GITHUB_EVENT_PATH"),
+++		RefName:         os.Getenv("GITHUB_REF_NAME"),
+++		RepositoryOwner: os.Getenv("GITHUB_REPOSITORY_OWNER"),
+++		SHA:             os.Getenv("GITHUB_SHA"),
+++		Actor:           os.Getenv("GITHUB_ACTOR"),
+++		ServerURL:       getEnvWithDefault("GITHUB_SERVER_URL", "https://github.com"),
+++		APIServerURL:    getEnvWithDefault("GITHUB_API_URL", "https://api.github.com"),
+++	}
+++}
+++
+++func getEnvWithDefault(key, defaultValue string) string {
+++	if value := os.Getenv(key); value != "" {
+++		return value
+++	}
+++	return defaultValue
+++}
+++
+++func (srv Service) GetEnvironment() Environment {
+++	return srv.env
+++}
+++
+++type Environment struct {
+++	Repository      string // GITHUB_REPOSITORY
+++	RepositoryName  string
+++	EventName       string // GITHUB_EVENT_NAME
+++	EventPath       string // GITHUB_EVENT_PATH
+++	RepositoryOwner string // GITHUB_REPOSITORY_OWNER
+++	RefName         string // GITHUB_REF_NAME
+++	SHA             string // GITHUB_SHA
+++	Actor           string // GITHUB_ACTOR
+++	ServerURL       string // GITHUB_SERVER_URL
+++	APIServerURL    string // GITHUB_API_URL
+++}
+++
+++type GitHubPRInfo struct {
+++	Number   int    `json:"number"`
+++	Title    string `json:"title"`
+++	HtmlURL  string `json:"html_url"`
+++	DiffURL  string `json:"diff_url"`
+++	PatchURL string `json:"patch_url"`
+++	Head     struct {
+++		SHA string `json:"sha"`
+++		Ref string `json:"ref"`
+++	} `json:"head"`
+++	Base struct {
+++		SHA string `json:"sha"`
+++		Ref string `json:"ref"`
+++	} `json:"base"`
+++	State string `json:"state"`
+++}
+++
+++type PullRequestEvent struct {
+++	Number      int          `json:"number"`
+++	PullRequest GitHubPRInfo `json:"pull_request"`
+++	Repository  struct {
+++		Name     string `json:"name"`
+++		FullName string `json:"full_name"`
+++		Owner    struct {
+++			Login string `json:"login"`
+++		} `json:"owner"`
+++	} `json:"repository"`
+++	Action string `json:"action"`
+++}
+++
+++func gettPRInfo(env Environment, arg arg.Arg) (GitHubPRInfo, error) {
+++	if env.EventPath != "" {
+++		if prInfo, err := getPRInfoFromEventFile(env.EventPath); err == nil {
+++			return prInfo, nil
+++		}
+++		log.Get().Debug("⚠️  Failed to read from event file, trying API...")
+++	}
+++
+++	return getPRInfoFromAPI(env, arg)
+++}
+++
+++func (srv Service) GetPRInfo() GitHubPRInfo {
+++	return srv.info
+++}
+++
+++func getPRInfoFromEventFile(eventPath string) (GitHubPRInfo, error) {
+++	prInfo := GitHubPRInfo{}
+++	data, err := os.ReadFile(eventPath)
+++	if err != nil {
+++		return prInfo, fmt.Errorf("failed to read event file: %w", err)
+++	}
+++
+++	var event PullRequestEvent
+++	if err := json.Unmarshal(data, &event); err != nil {
+++		return prInfo, fmt.Errorf("failed to parse event JSON: %w", err)
+++	}
+++
+++	return event.PullRequest, nil
+++}
+++
+++func getPRInfoFromAPI(env Environment, arg arg.Arg) (GitHubPRInfo, error) {
+++	prInfo := GitHubPRInfo{}
+++	//The for: refs/pull/{pr_number}/merge
+++	prNumber, err := extractPRNumber(env.RefName, env.SHA)
+++	if err != nil {
+++		return prInfo, fmt.Errorf("failed to extract PR number: %w", err)
+++	}
+++
+++	apiURL := fmt.Sprintf("%s/repos/%s/pulls/%d", env.APIServerURL, env.Repository, prNumber)
+++
+++	req, err := http.NewRequest("GET", apiURL, nil)
+++	if err != nil {
+++		return prInfo, fmt.Errorf("failed to create request: %w", err)
+++	}
+++
+++	req.Header.Set("Authorization", "token "+arg.GithubToken)
+++	req.Header.Set("Accept", "application/vnd.github.v3+json")
+++	req.Header.Set("User-Agent", "mingyuans/gocov-threshold")
+++
+++	client := &http.Client{Timeout: 30 * time.Second}
+++	resp, err := client.Do(req)
+++	if err != nil {
+++		return prInfo, fmt.Errorf("failed to send request: %w", err)
+++	}
+++	defer resp.Body.Close()
+++
+++	if resp.StatusCode != http.StatusOK {
+++		return prInfo, fmt.Errorf("API request failed with status %d", resp.StatusCode)
+++	}
+++
+++	// 解析响应
+++	if decodeErr := json.NewDecoder(resp.Body).Decode(&prInfo); decodeErr != nil {
+++		return prInfo, fmt.Errorf("failed to decode response: %w", decodeErr)
+++	}
+++
+++	return prInfo, nil
+++}
+++
+++func extractPRNumber(refName, sha string) (int, error) {
+++	if strings.HasPrefix(refName, "refs/pull/") {
+++		parts := strings.Split(refName, "/")
+++		if len(parts) >= 3 {
+++			return strconv.Atoi(parts[2])
+++		}
+++	}
+++
+++	if prNum, err := strconv.Atoi(refName); err == nil {
+++		return prNum, nil
+++	}
+++
+++	return 0, fmt.Errorf("unable to extract PR number from ref: %s", refName)
+++}
++diff --git a/cmd/threshold/pr/pr.go b/cmd/threshold/pr/pr.go
++new file mode 100644
++index 0000000..fbd4268
++--- /dev/null
+++++ b/cmd/threshold/pr/pr.go
++@@ -0,0 +1,22 @@
+++package pr
+++
+++import "github.com/mingyuans/gocov-threshold/cmd/threshold/arg"
+++
+++type Service struct {
+++	env      Environment
+++	info     GitHubPRInfo
+++	inputArg arg.Arg
+++}
+++
+++func NewService(inputArg arg.Arg) *Service {
+++	env := getPREnvironment()
+++	info, getInfoErr := gettPRInfo(env, inputArg)
+++	if getInfoErr != nil {
+++		panic("Failed to get PR info: " + getInfoErr.Error())
+++	}
+++	return &Service{
+++		env:      env,
+++		info:     info,
+++		inputArg: inputArg,
+++	}
+++}
++diff --git a/example/main.go b/example/main.go
++new file mode 100644
++index 0000000..880ee44
++--- /dev/null
+++++ b/example/main.go
++@@ -0,0 +1,25 @@
+++package main
+++
+++import "math/rand"
+++
+++func main() {
+++	value := rand.Intn(100)
+++	exampleFunc(value)
+++	exampleFunc2(value)
+++}
+++
+++func exampleFunc(value int) {
+++	if value%2 == 0 {
+++		println("Even")
+++	} else {
+++		println("Odd")
+++	}
+++}
+++
+++func exampleFunc2(value int) {
+++	if value%3 == 0 {
+++		println("Divisible by 3")
+++	} else {
+++		println("Not divisible by 3")
+++	}
+++}
++diff --git a/example/main_test.go b/example/main_test.go
++new file mode 100644
++index 0000000..f29423e
++--- /dev/null
+++++ b/example/main_test.go
++@@ -0,0 +1,15 @@
+++package main
+++
+++import "testing"
+++
+++func Test_exampleFunc(t *testing.T) {
+++	t.Run("exampleFunc", func(t *testing.T) {
+++		exampleFunc(1)
+++	})
+++}
+++
+++func Test_exampleFunc2(t *testing.T) {
+++	t.Run("exampleFunc2", func(t *testing.T) {
+++		exampleFunc2(3)
+++	})
+++}
++diff --git a/go.mod b/go.mod
++new file mode 100644
++index 0000000..3f37764
++--- /dev/null
+++++ b/go.mod
++@@ -0,0 +1,8 @@
+++module github.com/mingyuans/gocov-threshold
+++
+++go 1.24.2
+++
+++require (
+++	go.uber.org/multierr v1.11.0 // indirect
+++	go.uber.org/zap v1.27.0 // indirect
+++)
+\ No newline at end of file
+diff --git a/testdata/example-overage.out b/testdata/example-overage.out
+new file mode 100644
+index 0000000..7c39b24
+--- /dev/null
++++ b/testdata/example-overage.out
+@@ -0,0 +1,10 @@
++mode: set
++github.com/mingyuans/gocov-threshold/example/ignore.go:4.33,6.2 1 0
++github.com/mingyuans/gocov-threshold/example/main.go:9.13,14.2 4 0
++github.com/mingyuans/gocov-threshold/example/main.go:16.29,17.18 1 1
++github.com/mingyuans/gocov-threshold/example/main.go:17.18,19.3 1 0
++github.com/mingyuans/gocov-threshold/example/main.go:19.8,21.3 1 1
++github.com/mingyuans/gocov-threshold/example/main.go:24.30,25.18 1 1
++github.com/mingyuans/gocov-threshold/example/main.go:25.18,27.3 1 1
++github.com/mingyuans/gocov-threshold/example/main.go:27.8,30.3 1 0
++github.com/mingyuans/gocov-threshold/example/main.go:33.30,40.2 5 0

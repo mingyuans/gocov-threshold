@@ -1,0 +1,37 @@
+name: Integration Test
+
+on:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Go Test
+        run: |
+          go test ./example/... -coverprofile=coverage.out
+
+      - name: Coverage Threshold
+        id: coverage_threshold
+        uses: mingyuans/gocov-threshold@dev
+        with:
+          path: .
+          coverprofile: coverage.out
+          module: github.com/mingyuans/gocov-threshold
+          logger-level: debug
+          token: ${{ secrets.GITHUB_TOKEN }}
+          conf: gocov-conf.yaml
+          threshold: 0
+          print-uncovered-lines: true
+
+      - name: Comment
+        uses: mshick/add-pr-comment@v2
+        with:
+          message: |
+            Coverage on new code: ${{ steps.coverage_threshold.outputs.gocov }}%
