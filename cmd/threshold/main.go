@@ -8,6 +8,7 @@ import (
 	"github.com/mingyuans/gocov-threshold/cmd/threshold/model"
 	"github.com/mingyuans/gocov-threshold/cmd/threshold/pr"
 	"go.uber.org/zap"
+	"os"
 	"strings"
 )
 
@@ -73,4 +74,8 @@ func main() {
 	}
 
 	core.SetOutput("gocov", fmt.Sprintf("%.2f", coverage))
+
+	if coverage < actionArg.Threshold {
+		os.Exit(1)
+	}
 }
