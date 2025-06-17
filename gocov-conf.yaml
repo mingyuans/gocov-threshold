@@ -1,0 +1,17 @@
+files:
+  include:
+    dirs:
+      - example
+  #  patterns:
+  #    - "*.go"
+
+  exclude:
+    dirs:
+      - testdata
+    patterns:
+      - "*_mock.go"
+
+statements:
+  exclude:
+    patterns:
+      - ".*mu.Lock.*"

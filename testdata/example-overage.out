@@ -1,0 +1,10 @@
+mode: set
+github.com/mingyuans/gocov-threshold/example/ignore.go:4.33,6.2 1 0
+github.com/mingyuans/gocov-threshold/example/main.go:9.13,14.2 4 0
+github.com/mingyuans/gocov-threshold/example/main.go:16.29,17.18 1 1
+github.com/mingyuans/gocov-threshold/example/main.go:17.18,19.3 1 0
+github.com/mingyuans/gocov-threshold/example/main.go:19.8,21.3 1 1
+github.com/mingyuans/gocov-threshold/example/main.go:24.30,25.18 1 1
+github.com/mingyuans/gocov-threshold/example/main.go:25.18,27.3 1 1
+github.com/mingyuans/gocov-threshold/example/main.go:27.8,30.3 1 0
+github.com/mingyuans/gocov-threshold/example/main.go:33.30,40.2 5 0
